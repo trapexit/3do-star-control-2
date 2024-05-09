@@ -1,0 +1,15 @@
+#ifndef _SOUNDS_H
+#define _SOUNDS_H
+
+typedef enum
+{
+    GRAB_CREW = 0,
+    SHIP_EXPLODES,
+    TARGET_DAMAGED_FOR_1_PT,
+    TARGET_DAMAGED_FOR_2_3_PT,
+    TARGET_DAMAGED_FOR_4_5_PT,
+    TARGET_DAMAGED_FOR_6_PLUS_PT
+} SOUND_EFFECTS;
+
+#endif /* _SOUNDS_H */
+

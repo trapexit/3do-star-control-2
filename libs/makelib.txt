@@ -1,0 +1,1 @@
+make -f ¦.make > squid; squid; rm squid

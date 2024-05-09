@@ -1,0 +1,1109 @@
+#include "Portfolio.h"
+#include "Init3DO.h"
+#include "Parse3DO.h"
+#include "Utils3DO.h"
+#include "filefunctions.h"
+#include "BlockFile.h"
+
+#define BATCH_ZOOM
+
+#define SCREEN_WIDTH		320
+
+#define WIDTH			210
+#define HEIGHT			67
+#define XBANDS			6
+
+#define WRAP_EXTRA		20
+
+#define LINE_PIXELS		((WIDTH + WRAP_EXTRA + 3) & ~3)
+
+#define SURFACE_WIDTH		210
+#define SURFACE_HEIGHT		124
+
+#define SURFACE_SHIFT		2
+#define SURFACE_UNIT		(1 << SURFACE_SHIFT)
+#define SURFACE_ADD		(SURFACE_UNIT - 1)
+
+#define MASK_WIDTH		(SURFACE_UNIT + 1 + (2 * SURFACE_ADD))
+#define MASK_HEIGHT		MASK_WIDTH
+
+#define NUM_MASKS		8
+
+#define NUM_TINTS		4
+
+#define SCALE_STEP		7
+
+#define PIXC_DUP(v)		(((uint32)(v) << PPMP_0_SHIFT) | ((uint32)(v) << PPMP_1_SHIFT))
+#define PIXC_UNCODED16		(PIXC_DUP (PPMPC_MF_8 | PPMPC_SF_8))
+
+#define SET_CEL_FLAGS(c,f)	((c)->ccb_Flags |= (f))
+#define CLR_CEL_FLAGS(c,f)	((c)->ccb_Flags &= ~(f))
+
+#define CEL_FLAGS \
+	(CCB_SPABS | CCB_PPABS | CCB_YOXY | CCB_ACW | CCB_ACCW | CCB_LDSIZE | CCB_CCBPRE \
+	| CCB_LDPRS | CCB_LDPPMP | CCB_ACE | CCB_LCE | CCB_PLUTPOS | CCB_BGND | CCB_NPABS)
+
+#define MAP_CEL			myMapCel
+
+#define NUM_CELS		200
+
+#define SHIELD_RGB		((0x1f << 10) | 0x1f)
+
+static int32	x0[15], x1[15], y0[15], y1[15];
+static ubyte	ystep[15];
+static int32	src_ws[XBANDS];
+
+static CCB	planet_ccb, surface_ccb, tint_ccb[NUM_TINTS], mask_ccb;
+
+static CCB	*shadow_ccb;
+static char	*shadow_buf;
+
+static CCB	*shield_ccb;
+static char	*shield_buf;
+
+static ubyte	rmap[HEIGHT][LINE_PIXELS];
+static uint32	mask_buf[NUM_MASKS][MASK_HEIGHT][2];
+
+static CCB	plCCB[NUM_CELS];
+static CCB	*cur_ccb;
+
+#ifdef BATCH_ZOOM
+static ubyte	zoom_batch;
+static CCB	*last_zoom_ccb;
+#endif
+
+static void
+build_steps ()
+{
+    int32	y, i, c, inc;
+
+    c = 1;
+    inc = 1;
+    y = 0;
+    for (i = 0; y < (HEIGHT >> 1); ++i)
+    {
+	ystep[i] = (ubyte)c;
+	y += c;
+	if (y > (HEIGHT >> 2) && inc == 1)
+	{
+	    y -= c;
+	    ystep[i] = (ubyte)((HEIGHT >> 1) - (y << 1));
+	    if (ystep[i] == 0)
+		--i;
+	    else
+		y += ystep[i];
+	    
+	    inc = -1;
+	}
+	c += inc;
+    }
+
+    ystep[i] = 1;
+    
+#if 0
+y = 0;
+for (i = 0; y < (HEIGHT >> 1); i++)
+{
+    printf ("ystep[%ld] = %ld\n", i, ystep[i]);
+    y += ystep[i];
+}
+#endif
+}
+
+static void
+build_tables (int32 da)
+{
+    int32	y, i;
+
+    build_steps ();
+    
+    OpenMathFolio (); // calling this multiply is not a problem, right? 
+    
+    for (y = 0, i = 0; y <= (HEIGHT >> 1); i++)
+    {
+	int32	dx, dy, a, h;
+	
+	h = ystep[i];
+
+	if (y + h > (HEIGHT >> 1)
+		&& (h = (HEIGHT >> 1) - y + 1) == 0)
+	    return;
+
+	dy = (HEIGHT >> 1) - y;
+	dx = SqrtF16 (((HEIGHT >> 1) * (HEIGHT >> 1) - dy * dy) << 16);
+	dy <<= 16;
+
+	a = Atan2F16 (-dx, -dy);
+	a += da << 16;
+	x0[i] = HEIGHT * CosF16 (a);
+	y0[i] = HEIGHT * SinF16 (a);
+	a = Atan2F16 (dx, -dy);
+	a += da << 16;
+	x1[i] = HEIGHT * CosF16 (a);
+	y1[i] = HEIGHT * SinF16 (a);
+	
+	x0[i] >>= 1;
+	y0[i] >>= 1;
+	x1[i] >>= 1;
+	y1[i] >>= 1;
+	
+	y += h;
+#if 0
+printf ("%ld: %ld  ", i, y);
+printf ("%ld,%ld -- ", x0[i] >> 16, y0[i] >> 16);
+printf ("%ld,%ld\n", x1[i] >> 16, y1[i] >> 16);
+#endif
+    }
+    
+    x0[i] = x0[i - 1];
+    y0[i] = y0[i - 1];
+    x1[i] = x1[i - 1];
+    y1[i] = y1[i - 1];
+}
+
+static void
+draw_band (int32 src_x, int32 src_y, int32 dst_cx, int32 dst_cy)
+{
+    int32	*sp;
+    int32	i;
+    
+    sp = (int32 *)planet_ccb.ccb_SourcePtr + src_y * (LINE_PIXELS >> 1);
+
+    for (i = 0; i < XBANDS; i++)
+    {
+#define src_w	src_ws[i]
+	cur_ccb->ccb_SourcePtr = (CelData *)(sp + (src_x >> 1));
+	cur_ccb->ccb_XPos = dst_cx + cur_ccb->ccb_Width;
+	cur_ccb->ccb_YPos = dst_cy + cur_ccb->ccb_Height;
+	cur_ccb++;
+    
+	src_x += src_w;
+	if (src_x >= WIDTH)
+	    src_x -= WIDTH;
+	else if (src_x < 0)
+	    src_x += WIDTH;
+    }
+}
+
+static int32
+load_elevations (Stream *fp, char *elev)
+{
+    int32	ct;
+
+    ct = HEIGHT;
+    do
+    {
+	ReadDiskStream (fp, elev, WIDTH);
+	memcpy (elev + WIDTH, elev, WRAP_EXTRA);
+	elev += LINE_PIXELS;
+    } while (--ct);
+	
+    return (1);
+}
+
+static void
+xlate_topography (char *elev, char *xlat_tab, char *cmap, int32 *image)
+{
+    int32	x, y;
+
+    cmap += 2;
+    for (y = 0; y < HEIGHT; y++)
+    {
+	char	*ep;
+	int32	*ip;
+	
+	ep = elev;
+	ip = image;
+	for (x = 0; x < LINE_PIXELS; x += 2)
+	{
+	    int32	hi, lo;
+	    char	*cp;
+	    
+	    hi = xlat_tab[*ep++];
+	    cp = &cmap[(hi - 128) * 3];
+	    hi = (int32)(((*cp >> 1) << 10) | ((*(cp + 1) >> 1) << 5) | (*(cp + 2) >> 1));
+	    lo = xlat_tab[*ep++];
+	    cp = &cmap[(lo - 128) * 3];
+	    lo = (int32)(((*cp >> 1) << 10) | ((*(cp + 1) >> 1) << 5) | (*(cp + 2) >> 1));
+	    *ip++ = ((hi << 16) | lo) | 0x80008000;
+	}
+	
+	elev += LINE_PIXELS;
+	image += (LINE_PIXELS >> 1);
+    }
+}
+
+static int32
+load_planet (char *file, int32 ss_index, int32 pl_index, int32 mn_index,
+	char *xlat_tab, char *cmap, int32 *image)
+{
+    Stream	*fp;
+    int32	retval;
+    char	*elev;
+    
+    if (!(elev = (char *)AllocMem (LINE_PIXELS * HEIGHT, MEMTYPE_ANY)))
+	return (0);
+	
+    retval = 0;
+    if (fp = OpenDiskStream (file, 0))
+    {
+	long	pl_offs;
+
+	SeekDiskStream (fp, ss_index * sizeof (long), SEEK_SET);
+	ReadDiskStream (fp, (char *)&pl_offs, sizeof (pl_offs));
+	SeekDiskStream (fp, pl_offs + pl_index * sizeof (long), SEEK_SET);
+	ReadDiskStream (fp, (char *)&pl_offs, sizeof (pl_offs));
+	SeekDiskStream (fp, pl_offs + mn_index * (WIDTH * HEIGHT), SEEK_SET);
+	
+	if (load_elevations (fp, elev))
+	{
+	    xlate_topography (elev, xlat_tab, cmap, image);
+	    retval = 1;
+	}
+	
+	CloseDiskStream (fp);
+    }
+    
+    FreeMem (elev, LINE_PIXELS * HEIGHT);
+	
+    return (retval);
+}
+
+static void
+set_band_cels (int32 src_y, int32 src_h, int32 band)
+{
+    int32	i, dst_x0, dst_y0, dst_x1, dst_y1, dx0, dy0, dx1, dy1;
+
+    if (src_y > (HEIGHT >> 1))
+    {
+	if (src_y + src_h > HEIGHT
+		&& (src_h = HEIGHT - src_y + 1) == 0)
+	    return;
+	dx0 = x1[band + 1];
+	dy0 = y1[band + 1];
+	dx1 = x1[band];
+	dy1 = y1[band];
+	dst_x0 = -dx0;
+	dst_y0 = -dy0;
+	dst_x1 = -dx1;
+	dst_y1 = -dy1;
+	dx0 -= x0[band + 1];
+	dy0 -= y0[band + 1];
+	dx1 -= x0[band];
+	dy1 -= y0[band];
+    }
+    else
+    {
+	if (src_y + src_h > (HEIGHT >> 1)
+		&& (src_h = (HEIGHT >> 1) - src_y + 1) == 0)
+	    return;
+	dx0 = x0[band];
+	dy0 = y0[band];
+	dx1 = x0[band + 1];
+	dy1 = y0[band + 1];
+	dst_x0 = dx0;
+	dst_y0 = dy0;
+	dst_x1 = dx1;
+	dst_y1 = dy1;
+	dx0 = x1[band] - dx0;
+	dy0 = y1[band] - dy0;
+	dx1 = x1[band + 1] - dx1;
+	dy1 = y1[band + 1] - dy1;
+    }
+    
+    for (i = 0; i < XBANDS; i++)
+    {
+#define dd	d[i]
+#define src_w	src_ws[i]
+	Point	quadpts[4];
+	int32	d[XBANDS] = { 17, 47, 64, 64, 47, 17 };
+
+	quadpts[0].pt_X = dst_x0;
+	quadpts[0].pt_Y = dst_y0;
+	quadpts[3].pt_X = dst_x1;
+	quadpts[3].pt_Y = dst_y1;
+
+	dst_x0 += (dx0 * dd) >> 8;
+	dst_y0 += (dy0 * dd) >> 8;
+	dst_x1 += (dx1 * dd) >> 8;
+	dst_y1 += (dy1 * dd) >> 8;
+
+	quadpts[1].pt_X = dst_x0;
+	quadpts[1].pt_Y = dst_y0;
+	quadpts[2].pt_X = dst_x1;
+	quadpts[2].pt_Y = dst_y1;
+
+	cur_ccb->ccb_PRE0 &= ~PRE0_VCNT_MASK;
+	cur_ccb->ccb_PRE1 &= ~PRE1_TLHPCNT_MASK;
+	cur_ccb->ccb_PRE0 |= (src_h - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT;
+	cur_ccb->ccb_PRE1 |= (src_w - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT;
+
+	cur_ccb->ccb_Width = src_w;
+	cur_ccb->ccb_Height = src_h;
+
+	MAP_CEL (cur_ccb, quadpts);
+	
+	cur_ccb->ccb_Width = cur_ccb->ccb_XPos;
+	cur_ccb->ccb_Height = cur_ccb->ccb_YPos;
+	
+	cur_ccb++;
+    }
+}
+
+static void
+init_rotate_cels ()
+{
+    int32	i, incr, y;
+    
+    incr = 1;
+    cur_ccb = plCCB;
+    for (y = 0, i = 0; y < HEIGHT;)
+    {
+#define src_h	ystep[i]
+	set_band_cels (y, src_h, i);
+	y += src_h;
+	i += incr;
+	if (src_h == 0)
+	{
+	    --i;
+	    incr = -1;
+	    if (HEIGHT & 1)
+		--i;
+	}
+    }
+}
+
+void
+SetPlanetTilt (int32 da)
+{
+    int32	w, i;
+
+    for (i = 0, cur_ccb = plCCB; i < 150; i++, cur_ccb++)
+    {
+	*cur_ccb = planet_ccb;
+	cur_ccb->ccb_NextPtr = cur_ccb + 1;
+    }
+    
+    if (!src_ws[0])
+    {
+	w = (WIDTH / 2) / XBANDS;
+	i = XBANDS - 1;
+	do
+	    src_ws[i] = w;
+	while (i--);
+
+	if (w * XBANDS < (WIDTH / 2))
+	{
+	    w = (WIDTH / 2) - XBANDS * w;
+	    i = 0;
+	    do
+		src_ws[i++]++;
+	    while (--w);
+	}
+
+	build_tables (da);
+    }
+    
+    init_rotate_cels ();
+}
+
+void
+RotatePlanet (int32 x, int32 dx, int32 dy, int32 scale)
+{
+    int32	i, y;
+    int32	incr;
+    CCB		*first;
+
+    dx <<= 16;
+    dy <<= 16;
+    incr = 1;
+    first = cur_ccb = plCCB;
+    for (y = 0, i = 0; y < HEIGHT;)
+    {
+#define src_h	ystep[i]
+	draw_band (x, y, dx, dy);//x, y, src_h, dx, dy, i, scale);
+	y += src_h;
+	i += incr;
+	if (src_h == 0)
+	{
+	    --i;
+	    incr = -1;
+	    if (HEIGHT & 1)
+		--i;
+	}
+    }
+    
+    add_cels (first, cur_ccb - 1);
+    
+    if (shadow_buf)
+    {
+	shadow_ccb->ccb_XPos = dx - (shadow_ccb->ccb_Width << 15);
+	shadow_ccb->ccb_YPos = dy - (shadow_ccb->ccb_Height << 15);
+	shadow_ccb->ccb_HDX = 1 << 20;
+	shadow_ccb->ccb_VDY = 1 << 16;
+	if (0)//scale)
+	{
+	    shadow_ccb->ccb_XPos = dx + (((shadow_ccb->ccb_XPos - dx) * scale) >> SCALE_STEP);
+	    shadow_ccb->ccb_YPos = dy + (((shadow_ccb->ccb_YPos - dy) * scale) >> SCALE_STEP);
+	    shadow_ccb->ccb_HDX = (shadow_ccb->ccb_HDX * scale) >> SCALE_STEP;
+	    shadow_ccb->ccb_VDY = (shadow_ccb->ccb_VDY * scale) >> SCALE_STEP;
+	}
+	add_cel (shadow_ccb);
+    }
+    
+    if (shield_buf)
+    {
+	shield_ccb->ccb_XPos = dx - (shield_ccb->ccb_Width << 15);
+	shield_ccb->ccb_YPos = dy - (shield_ccb->ccb_Height << 15);
+	shield_ccb->ccb_HDX = 1 << 20;
+	shield_ccb->ccb_VDY = 1 << 16;
+	if (0)//scale)
+	{
+	    shield_ccb->ccb_XPos = dx + (((shield_ccb->ccb_XPos - dx) * scale) >> SCALE_STEP);
+	    shield_ccb->ccb_YPos = dy + (((shield_ccb->ccb_YPos - dy) * scale) >> SCALE_STEP);
+	    shield_ccb->ccb_HDX = (shield_ccb->ccb_HDX * scale) >> SCALE_STEP;
+	    shield_ccb->ccb_VDY = (shield_ccb->ccb_VDY * scale) >> SCALE_STEP;
+	}
+	add_cel (shield_ccb);
+    }
+}
+
+void
+DrawPlanet (int32 x, int32 y, int32 dy, uint32 rgb)
+{
+    if (shield_buf)
+    {
+	dy = HEIGHT + NUM_TINTS;
+	rgb = (0x1f << 10);// | 0x1f;
+    }
+    
+    if (rgb)
+    {
+	int32	i, nt, my;
+
+	my = dy - NUM_TINTS;
+	if (my < 0)
+	{
+	    nt = NUM_TINTS + my + 1;
+	    my = 0;
+	}
+	else if (my >= HEIGHT)
+	{
+	    nt = NUM_TINTS;
+	    my = HEIGHT - 1;
+	}
+	else
+	    nt = NUM_TINTS;
+	
+	my += y;
+	
+	surface_ccb.ccb_XPos = x << 16;
+	surface_ccb.ccb_YPos = y << 16;
+	surface_ccb.ccb_SourcePtr = planet_ccb.ccb_SourcePtr;
+	surface_ccb.ccb_PRE0 =
+		PRE0_BGND
+		| (((dy + 1) - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT)
+		| PRE0_LINEAR
+		| PRE0_BPP_16;
+	surface_ccb.ccb_PIXC =
+		PIXC_DUP (PPMPC_1S_PDC | PPMPC_MS_CCB | PPMPC_MF_6
+		| PPMPC_SF_8 | PPMPC_2S_0);
+	add_cel (&surface_ccb);
+	
+	nt = NUM_TINTS - nt;
+	for (i = nt; i < NUM_TINTS; i++, my++)
+	{
+	    int32	ty;
+	    
+	    ty = my - y;
+	    if (ty >= 0 && ty < HEIGHT)
+	    {
+		if (i == 0)
+		{
+		    tint_ccb[i].ccb_YPos = y << 16;
+		    tint_ccb[i].ccb_VDY = (ty + 1) << 16;
+		}
+		else
+		    tint_ccb[i].ccb_YPos = my << 16;
+		tint_ccb[i].ccb_XPos = x << 16;
+		*((uint32 *)tint_ccb[i].ccb_SourcePtr) = rgb | (rgb << 16) | 0x80008000;
+		add_cel (&tint_ccb[i]);
+	    }
+	}
+    }
+    else
+    {
+	surface_ccb.ccb_XPos = x << 16;
+	surface_ccb.ccb_YPos = y << 16;
+	surface_ccb.ccb_SourcePtr = planet_ccb.ccb_SourcePtr;
+	surface_ccb.ccb_PRE0 =
+		PRE0_BGND
+		| ((HEIGHT - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT)
+		| PRE0_LINEAR
+		| PRE0_BPP_16;
+	surface_ccb.ccb_PIXC = PIXC_UNCODED16;
+	add_cel (&surface_ccb);
+    }
+}
+
+#define SET_PLUT(c,x,y) \
+	((c)->ccb_Width = (((*(sp + ((x) >> 1))) >> (((x) & 1) << 4)) & 0xffff) | 0x8000)
+	
+static int32	old_sx, old_sy;
+
+void
+SetPlanetZoom ()
+{
+    int32	i;
+
+    old_sx = -1;
+    
+    for (i = 0; i < NUM_MASKS; i++)
+    {
+	int32	j;
+	
+	for (j = 0; j < MASK_HEIGHT; j++)
+	    mask_buf[i][j][0] = random ();
+	for (j = SURFACE_ADD; j < MASK_WIDTH - SURFACE_ADD; j++)
+	    //mask_buf[i][j][0] |= 0x01fe0000;
+	    mask_buf[i][j][0] |= 0x1f000000;
+    }
+    
+    for (i = 0; i < HEIGHT; i++)
+    {
+	int32	j;
+	
+	for (j = 0; j < LINE_PIXELS; j++)
+	    rmap[i][j] = random () & (NUM_MASKS - 1);
+    }
+    
+    for (i = 0, cur_ccb = plCCB; i < sizeof (plCCB) / sizeof (plCCB[0]); i++, cur_ccb++)
+    {
+	*cur_ccb = mask_ccb;
+	cur_ccb->ccb_PLUTPtr = (void *)&cur_ccb->ccb_Width;
+	cur_ccb->ccb_NextPtr = cur_ccb + 1;
+    }
+}
+
+static CCB	copy_ccb =
+{
+    (CEL_FLAGS | CCB_LAST) & ~CCB_PPABS, // Flags
+		    
+    0, // NextPtr
+		    
+    0, // SourcePtr
+		    
+    0, // PLUTPtr
+		    
+    0, // XPos
+    0, // YPos
+	    
+    1 << 20, // HDX
+    0, // HDY
+	    
+    0, // VDX
+    1 << 16, // VDY
+		    
+    0, // HDDX
+    0, // HDDY
+		    
+    PIXC_UNCODED16, // PIXC
+		    
+    PRE0_BGND
+	    | PRE0_LINEAR
+	    | (PRE0_BPP_16 << PRE0_BPP_SHIFT)
+	    | (((SURFACE_HEIGHT >> 1) - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT), // PRE0
+
+    PRE1_LRFORM
+	    | PRE1_TLLSB_PDC0
+	    | ((SURFACE_WIDTH - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT)
+	    | ((SCREEN_WIDTH - PRE1_WOFFSET_PREFETCH) << PRE1_WOFFSET10_SHIFT), // PRE1
+};
+		
+#define MIN_Y	(-(SURFACE_HEIGHT >> 1))
+#define MAX_Y	((HEIGHT << SURFACE_SHIFT) - (SURFACE_HEIGHT >> 1))
+
+static CCB	black_ccb =
+{
+    (CEL_FLAGS | CCB_LAST) & ~CCB_PPABS, // Flags
+		    
+    0, // NextPtr
+		    
+    0, // SourcePtr
+		    
+    0, // PLUTPtr
+		    
+    0, // XPos
+    0, // YPos
+	    
+    SURFACE_WIDTH << 20, // HDX
+    0, // HDY
+	    
+    0, // VDX
+    1 << 16, // VDY
+		    
+    0, // HDDX
+    0, // HDDY
+		    
+    PIXC_UNCODED16, // PIXC
+		    
+    PRE0_BGND
+	    | PRE0_LINEAR
+	    | (PRE0_BPP_16 << PRE0_BPP_SHIFT), // PRE0
+
+    PRE1_LRFORM
+	    | PRE1_TLLSB_PDC0, // PRE1
+	    
+    0x80008000, // Width
+};
+
+static void
+draw_black (int32 y, int32 h)
+{
+    black_ccb.ccb_SourcePtr = (CelData *)&black_ccb.ccb_Width;
+    black_ccb.ccb_YPos = y << 16;
+    black_ccb.ccb_VDY = h << 15; // why 15 and not 16?!?!
+    add_cel (&black_ccb);
+}
+
+static void
+draw_surface_cels (int32 x, int32 y, int32 w, int32 h)
+{
+    ubyte	*rmc, *rmr;
+    uint32	*sp;
+    int32	sx, sy, dx, dy;
+    int32	lx, ly;
+    int32	osx, osy, olx, oly;
+    int32	_sx, _dx;
+    int32	rx, ry;
+
+    osx = old_sx + x;
+    if (osx < 0)
+	osx += WIDTH << SURFACE_SHIFT;
+    else if (osx >= WIDTH << SURFACE_SHIFT)
+	osx -= WIDTH << SURFACE_SHIFT;
+    olx = osx + w - 1;
+
+    osy = old_sy + y;
+    oly = osy + h - 1;
+    
+    if (osy < 0)
+    {
+	h += osy;
+	y -= osy;
+	if (h <= 0)
+	    return;
+	osy = 0;
+    }
+    else if (oly > (HEIGHT << SURFACE_SHIFT) - 1)
+    {
+	oly -= (HEIGHT << SURFACE_SHIFT) - 1;
+	h -= oly;
+	if (h <= 0)
+	    return;
+	oly = (HEIGHT << SURFACE_SHIFT) - 1;
+    }
+    
+    sx = (osx - (MASK_WIDTH >> 1) + SURFACE_ADD) >> SURFACE_SHIFT;
+    sy = (osy - (MASK_HEIGHT >> 1) + SURFACE_ADD) >> SURFACE_SHIFT;
+    lx = ((olx + (MASK_WIDTH >> 1)) & ~SURFACE_ADD) >> SURFACE_SHIFT;
+    ly = ((oly + (MASK_HEIGHT >> 1)) & ~SURFACE_ADD) >> SURFACE_SHIFT;
+    
+    if (sy < 0)
+	sy = 0;
+    else if (ly >= HEIGHT)
+	ly = HEIGHT - 1;
+
+    dx = (x - (osx - ((sx << SURFACE_SHIFT) - (MASK_WIDTH >> 1)))) << 16;
+    dy = (y - (osy - ((sy << SURFACE_SHIFT) - (MASK_HEIGHT >> 1)))) << 16;
+
+#if 0
+if (old_sy + y < 0)
+{
+printf ("sx,sy %ld,%ld -- ", sx, sy);
+printf ("lx,ly %ld,%ld  ", lx, ly);
+printf ("osx,osy %ld,%ld -- ", osx, osy);
+printf ("olx,oly %ld,%ld\n", olx, oly);
+printf ("old_sx,old_sy %ld,%ld  ", old_sx, old_sy);
+printf ("x,y %ld,%ld -- ", x, y);
+printf ("w,h %ld,%ld  ", w, h);
+printf ("dx,dy %ld,%ld\n", dx >> 16, dy >> 16);
+x = 0xffff;
+}
+#endif
+    ry = sy;
+    if (ry < 0)
+	ry += HEIGHT;
+    else if (ry >= HEIGHT)
+	ry -= HEIGHT;
+    
+    w = lx - sx + 1;
+    h = ly - sy + 1;
+    _sx = sx;
+    _dx = dx;
+
+    sp = (uint32 *)planet_ccb.ccb_SourcePtr + ry * (LINE_PIXELS >> 1);
+    rmr = rmap[ry];
+    
+    do
+    {
+	int32	_w;
+	
+	_w = w;
+	rx = sx;
+	if (rx < 0)
+	    rx += WIDTH;
+	else if (rx >= WIDTH)
+	    rx -= WIDTH;
+	rmc = &rmr[rx];
+	do
+	{
+	    int32	pix;
+	    int32	nx, ny;
+	    
+	    cur_ccb->ccb_SourcePtr = (CelData *)mask_buf[*rmc];
+	    SET_PLUT (cur_ccb, rx, ry);
+	    cur_ccb->ccb_XPos = dx;
+	    cur_ccb->ccb_YPos = dy;
+	    cur_ccb->ccb_PRE0 &= ~(PRE0_VCNT_MASK | PRE0_SKIPX_MASK);
+	    cur_ccb->ccb_PRE1 &= ~PRE1_TLHPCNT_MASK;
+	    
+	    nx = (sx << SURFACE_SHIFT) - (MASK_WIDTH >> 1);
+	    if (nx < osx)
+	    {
+		nx = osx - nx;
+		cur_ccb->ccb_XPos += nx << 16;
+		cur_ccb->ccb_PRE0 |= nx << PRE0_SKIPX_SHIFT;
+	    }
+	    
+	    nx = (sx << SURFACE_SHIFT) + (MASK_WIDTH >> 1);
+	    if (nx > olx)
+	    {
+		nx = MASK_WIDTH - (nx - olx);
+		cur_ccb->ccb_PRE1 |= (nx - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT;
+	    }
+	    else
+		cur_ccb->ccb_PRE1 |= (MASK_WIDTH - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT;
+
+	    pix = MASK_HEIGHT;
+	    ny = (sy << SURFACE_SHIFT) - (MASK_HEIGHT >> 1);
+	    if (ny < osy)
+	    {
+		ny = osy - ny;
+		pix -= ny;
+		cur_ccb->ccb_YPos += ny << 16;
+		cur_ccb->ccb_SourcePtr = (CelData *)((uint32 *)cur_ccb->ccb_SourcePtr + (ny << 1));
+	    }
+	    
+	    ny = (sy << SURFACE_SHIFT) + (MASK_HEIGHT >> 1);
+	    if (ny > oly)
+		pix -= ny - oly;
+	    cur_ccb->ccb_PRE0 |= (pix - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT;
+#if 0
+if (x == 0xffff && cur_ccb->ccb_XPos >> 16 == 63)
+{
+printf ("Flags 0x%08lx  Next 0x%08lx\n", cur_ccb->ccb_Flags, cur_ccb->ccb_NextPtr);
+printf ("    Source 0x%08lx  PLUT 0x%08lx\n", cur_ccb->ccb_SourcePtr, cur_ccb->ccb_PLUTPtr);
+printf ("    XPos %ld  YPos %ld\n", cur_ccb->ccb_XPos >> 16, cur_ccb->ccb_YPos >> 16);
+printf ("    rx,ry %ld,%ld\n", rx, ry);
+printf ("    PRE0 0x%08lx  PRE1 0x%08lx\n", cur_ccb->ccb_PRE0, cur_ccb->ccb_PRE1);
+printf ("    Width %ld  Height %ld\n", cur_ccb->ccb_Width, cur_ccb->ccb_Height);
+printf ("    SKIPX %ld, TLHPCNT %ld  ",
+	((cur_ccb->ccb_PRE0 & PRE0_SKIPX_MASK) >> PRE0_SKIPX_SHIFT),
+	((cur_ccb->ccb_PRE1 & PRE1_TLHPCNT_MASK) >> PRE1_TLHPCNT_SHIFT) + PRE1_TLHPCNT_PREFETCH);
+printf ("    VCNT %ld, source y +%d, using mask %d\n",
+	((cur_ccb->ccb_PRE0 & PRE0_VCNT_MASK) >> PRE0_VCNT_SHIFT) + PRE0_VCNT_PREFETCH,
+	((char *)cur_ccb->ccb_SourcePtr - (char *)&mask_buf[*rmc]) / (sizeof (int32) << 1),
+	*rmc);
+}
+#endif
+#ifndef BATCH_ZOOM
+	    add_cel (cur_ccb);
+	    if (++cur_ccb == &plCCB[NUM_CELS])
+	    {
+		_ThreeDO_batch_cels ();
+		cur_ccb = plCCB;
+	    }
+#else
+	    cur_ccb->ccb_Flags &= ~CCB_LAST;
+	    if (++cur_ccb == &plCCB[NUM_CELS])
+	    {
+		--cur_ccb;
+		add_cels (plCCB, cur_ccb);
+		_ThreeDO_batch_cels ();
+		cur_ccb->ccb_NextPtr = cur_ccb + 1;
+		cur_ccb = plCCB;
+	    }
+#endif
+	    
+	    dx += SURFACE_UNIT << 16;
+	    ++sx;
+	    if (++rx >= WIDTH)
+	    {
+		rx -= WIDTH;
+		rmc = &rmr[rx];
+	    }
+	    else
+		rmc++;
+	} while (--_w);
+	
+	sx = _sx;
+	dx = _dx;
+	
+	dy += SURFACE_UNIT << 16;
+	++sy;
+	if (++ry >= HEIGHT)
+	{
+	    break;
+#if 0
+	    ry -= HEIGHT;
+	    rmr = rmap[ry];
+	    sp -= HEIGHT * (LINE_PIXELS >> 1);
+#endif
+	}
+	else
+	{
+	    rmr += sizeof (rmap[0]);
+	    sp += (LINE_PIXELS >> 1);
+	}
+    } while (--h);
+}
+
+#define REPAIR_BLACK() \
+	do \
+	{ \
+	    if (old_sy < 0) \
+		draw_black (0, -old_sy); \
+	    else if (old_sy > (HEIGHT << SURFACE_SHIFT) - SURFACE_HEIGHT) \
+		draw_black ((HEIGHT << SURFACE_SHIFT) - old_sy, \
+			old_sy + SURFACE_HEIGHT - (HEIGHT << SURFACE_SHIFT)); \
+	} while (0)
+
+#ifdef BATCH_ZOOM
+void
+BatchZoomedPlanet ()
+{
+    if (zoom_batch++ == 0)
+    {
+	cur_ccb = plCCB;
+	if (last_zoom_ccb)
+	    last_zoom_ccb->ccb_NextPtr = last_zoom_ccb + 1;
+    }
+}
+
+void
+UnbatchZoomedPlanet ()
+{
+    if (zoom_batch && --zoom_batch == 0 && cur_ccb != plCCB)
+    {
+	last_zoom_ccb = cur_ccb - 1;
+	add_cels (plCCB, last_zoom_ccb);
+    }
+}
+#endif
+
+void
+RepairZoomedPlanet (int32 x, int32 y, int32 w, int32 h)
+{
+    if (old_sx == -1)
+    {
+	old_sx = x;
+	old_sy = y;
+	REPAIR_BLACK ();
+#ifndef BATCH_ZOOM
+	cur_ccb = plCCB;
+#endif
+	if (old_sy < 0)
+	    draw_surface_cels (0, -old_sy, SURFACE_WIDTH, SURFACE_HEIGHT);
+	else
+	    draw_surface_cels (0, 0, SURFACE_WIDTH, SURFACE_HEIGHT);
+	return;
+    }
+
+    draw_surface_cels (x, y, w, h);
+}
+
+void
+ScrollZoomedPlanet (int32 dx, int32 dy, int32 clip_x, int32 clip_y, void *bm_Buffer)
+{
+#ifndef BATCH_ZOOM
+    cur_ccb = plCCB;
+#endif
+    
+    if (dx == 0 && dy == 0)
+    {
+	REPAIR_BLACK ();
+	return;
+    }
+	
+    if ((old_sx -= dx) < 0)
+	old_sx += WIDTH << SURFACE_SHIFT;
+    else if (old_sx >= WIDTH << SURFACE_SHIFT)
+	old_sx -= WIDTH << SURFACE_SHIFT;
+	
+    if ((old_sy -= dy) < MIN_Y)
+    {
+	dy += old_sy - MIN_Y;
+	old_sy = MIN_Y;
+    }
+    else if (old_sy >= MAX_Y)
+    {
+	dy -= MAX_Y - old_sy;
+	old_sy = MAX_Y;
+    }
+    
+    if (dx == 0 && dy == 0)
+    {
+	REPAIR_BLACK ();
+	return;
+    }
+
+    copy_ccb.ccb_SourcePtr = (CelData *)((int32 *)bm_Buffer
+	    + clip_y * (SCREEN_WIDTH >> 1) + clip_x);
+    copy_ccb.ccb_XPos = dx << 16;
+    copy_ccb.ccb_YPos = dy << 16;
+    add_cel (&copy_ccb);
+
+    REPAIR_BLACK ();
+
+    if (dy > 0) // repair top
+	RepairZoomedPlanet (0, 0, SURFACE_WIDTH, dy);
+    if (dx > 0) // repair left
+    {
+	if (old_sy < 0)
+	    RepairZoomedPlanet (0, -old_sy, dx, SURFACE_HEIGHT);
+	else
+	    RepairZoomedPlanet (0, 0, dx, SURFACE_HEIGHT);
+    }
+    if (dx < 0) // repair right
+    {
+	if (old_sy < 0)
+	    RepairZoomedPlanet (SURFACE_WIDTH + dx, -old_sy, -dx, SURFACE_HEIGHT);
+	else
+	    RepairZoomedPlanet (SURFACE_WIDTH + dx, 0, -dx, SURFACE_HEIGHT);
+    }
+    if (dy < 0) // repair bottom
+	RepairZoomedPlanet (0, SURFACE_HEIGHT + dy, SURFACE_WIDTH, -dy);
+}
+
+#define SOL	82
+#define EARTH	2
+
+int
+BuildPlanet (int32 ss_index, int32 pl_index, int32 mn_index,
+	char *xlat_tab, char *cmap, int32 *image, int32 shielded)
+{
+    int32	size, i;
+
+printf ("BuildPlanet: %ld %ld %ld\n", ss_index, pl_index, mn_index);
+    if (ss_index == SOL && pl_index == EARTH && mn_index == 0) // earth
+    {
+	CCB	*earth_ccb;
+	void	*earth_buf;
+
+	if ((earth_buf = (char *)LoadFile ("starcon2/ipanims/earth.cel", &size, MEMTYPE_ANY))
+		&& (earth_ccb = ParseCel (earth_buf, size)))
+	{
+	    memcpy (image, earth_ccb->ccb_SourcePtr, LINE_PIXELS * HEIGHT * 2);
+	    UnloadFile (earth_buf);
+	}
+	else
+	    return (0);
+    }
+    else if (!load_planet ("starcon2/planet.dat",
+	    ss_index, pl_index, mn_index,
+	    xlat_tab, cmap, image))
+	return (0);
+	
+    src_ws[0] = 0; // for init flag in SetPlanetTilt
+	
+    planet_ccb.ccb_Flags = CEL_FLAGS;
+    planet_ccb.ccb_Width = WIDTH + WRAP_EXTRA;
+    planet_ccb.ccb_Height = HEIGHT;
+    planet_ccb.ccb_PRE0 =
+	    PRE0_BGND
+	    | ((HEIGHT - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT)
+	    | PRE0_LINEAR
+	    | PRE0_BPP_16;
+    planet_ccb.ccb_PRE1 =
+	    PRE1_TLLSB_PDC0
+	    | ((WIDTH + WRAP_EXTRA - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT)
+	    | (((LINE_PIXELS >> 1) - PRE1_WOFFSET_PREFETCH) << PRE1_WOFFSET10_SHIFT);
+    planet_ccb.ccb_SourcePtr = (CelData *)image;
+    planet_ccb.ccb_PIXC = PIXC_UNCODED16;
+    
+    surface_ccb = planet_ccb;
+    surface_ccb.ccb_HDX = 1 << 20;
+    surface_ccb.ccb_HDY = 0;
+    surface_ccb.ccb_VDX = 0;
+    surface_ccb.ccb_VDY = 1 << 16;
+    surface_ccb.ccb_HDDX = 0;
+    surface_ccb.ccb_HDDY = 0;
+    surface_ccb.ccb_PRE1 &= ~PRE1_TLHPCNT_MASK;
+    surface_ccb.ccb_PRE1 |= (WIDTH - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT;
+    
+    for (i = 0; i < NUM_TINTS; i++)
+    {
+	tint_ccb[i] = surface_ccb;
+	tint_ccb[i].ccb_HDX = WIDTH << 20;
+	tint_ccb[i].ccb_VDY = 1 << 16;
+	tint_ccb[i].ccb_PRE0 = PRE0_BGND | PRE0_LINEAR | PRE0_BPP_16;
+	tint_ccb[i].ccb_PRE1 = PRE1_TLLSB_PDC0;
+	tint_ccb[i].ccb_SourcePtr = (CelData *)&tint_ccb[i].ccb_Width;
+	tint_ccb[i].ccb_PIXC =
+		PIXC_DUP (PPMPC_1S_PDC | PPMPC_MS_CCB | ((i + 4) << PPMPC_MF_SHIFT)
+		| PPMPC_SF_8 | PPMPC_2S_CFBD | PPMPC_2D_1);
+    }
+    
+    if (shadow_buf)
+    {
+	UnloadFile (shadow_buf);
+	shadow_buf = 0;
+    }
+
+    if (shadow_buf = (char *)LoadFile ("starcon2/ipanims/SHAD0001.cel", &size, MEMTYPE_ANY))
+    {
+	if (shadow_ccb = ParseCel (shadow_buf, size))
+	{
+	    shadow_ccb->ccb_PIXC =
+		    PIXC_DUP (PPMPC_1S_CFBD | PPMPC_MF_2
+		    | PPMPC_SF_2 | PPMPC_2S_PDC | (1 << 1));
+	    SET_CEL_FLAGS (shadow_ccb, CCB_USEAV);
+	}
+    }
+
+    if (shield_buf)
+    {
+	UnloadFile (shield_buf);
+	shield_buf = 0;
+    }
+
+    if (shielded
+	    && (shield_buf = (char *)LoadFile ("starcon2/ipanims/shield.cel", &size, MEMTYPE_ANY)))
+    {
+	if (shield_ccb = ParseCel (shield_buf, size))
+	{
+	    shield_ccb->ccb_PIXC =
+		    PIXC_DUP (PPMPC_1S_PDC | PPMPC_MS_CCB | PPMPC_MF_6
+		    | PPMPC_SF_8 | PPMPC_2S_CFBD | PPMPC_2D_1);
+	}
+    }
+
+    mask_ccb.ccb_Flags = (CEL_FLAGS | CCB_LDPLUT) & ~(CCB_BGND | CCB_PLUTPOS);
+    mask_ccb.ccb_Width = MASK_WIDTH;
+    mask_ccb.ccb_Height = MASK_HEIGHT;
+    mask_ccb.ccb_HDX = 1 << 20;
+    mask_ccb.ccb_VDY = 1 << 16;
+    mask_ccb.ccb_PRE0 =
+	    ((MASK_HEIGHT - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT)
+	    | PRE0_BPP_1;
+    mask_ccb.ccb_PRE1 =
+	    PRE1_TLLSB_PDC0
+	    | ((MASK_WIDTH - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT)
+	    | ((2 - PRE1_WOFFSET_PREFETCH) << PRE1_WOFFSET8_SHIFT);
+    mask_ccb.ccb_PIXC =
+	    PIXC_DUP (PPMPC_1S_PDC | PPMPC_MS_CCB | PPMPC_MF_2
+		    | PPMPC_SF_2 | PPMPC_2S_0 | PPMPC_2D_1);
+	
+    return (1);
+}

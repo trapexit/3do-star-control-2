@@ -1,0 +1,29 @@
+Changes for version SC20816a.zip
+
+1. Fixed crash when new/load game while holding buttons down.
+    RISK: 6 (input ignored during startup)
+    REWARD: 10 (fixes crash!)
+    Note: this should be tested a lot!
+    
+2. Fixed Tanaka's showing up in Melee.  Once he showed up in RPG,
+	you could never get a normal Shofixti again.
+    RISK: 1
+    REWARD: 10
+
+3. Fixed VUX's NOT showing up close in RPG.
+    RISK: 1
+    REWARD: 4
+
+4. Made Chmmr conversation fade back to normal (bug seen 8/15)
+    RISK: 1
+    REWARD: 9+
+    
+5. Fixed graphic glitch in Melee team-saving.
+    RISK: 1
+    REWARD: 8
+
+6. Fixed crash bug when starting Melee after quitting RPG in the
+	middle of an encounter where you had lots of ships (bug
+	seen 8/15)
+    RISK: 2
+    REWARD: 10

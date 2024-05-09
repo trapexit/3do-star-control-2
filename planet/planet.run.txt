@@ -1,0 +1,44 @@
+planet 0 0 0 rst_xlts.xlt rst_cts_.ct
+planet 0 1 0 bnd_xlts.xlt qqq_cts_.ct
+planet 0 2 0 gasg.xlt cyagasgi.ct
+planet 0 2 1 rst_xlts.xlt rrr_cts_.ct
+planet 0 2 2 ice_xlts.xlt ice_cts_.ct
+planet 0 2 4 den_xlts.xlt vigscts_.ct
+planet 0 3 1 rst_xlts.xlt rdx_cts_.ct
+planet 0 3 2 bnd_xlts.xlt co2_cts_.ct
+planet 0 3 3 rst_xlts.xlt blgscts_.ct
+planet 0 4 0 ice_xlts.xlt rdx_cts_.ct
+
+planet 9 2 0 cry_xlts.xlt rub_cts_.ct
+
+planet 21 0 0 h2o_xlts.xlt h2o_cts_.ct
+
+???
+planet 31 6 0 gasg.xlt redgasgi.ct
+???
+
+planet 62 0 0 rai_xlts.xlt rai_cts_.ct
+
+planet 63 3 0 h2o_xlts.xlt rst_cts_.ct
+
+planet 82 0 0 mtl1xlts.xlt mtl_cts_.ct
+
+planet 82 1 0 rst_xlts.xlt co2_cts_.ct
+
+planet 82 2 2 den_xlts.xlt lit_cts_.ct
+
+planet 82 3 0 rst_xlts.xlt dst_cts_.ct
+
+planet 82 4 0 gasg.xlt redgasgi.ct
+
+planet 82 5 0 gasg.xlt oragasgi.ct
+
+planet 103 1 0 h2o_xlts.xlt h2o_cts_.ct
+
+planet 107 4 0 rst_xlts.xlt bnd_cts_.ct
+
+planet 124 0 0 hel_xlts.xlt hel_cts_.ct
+
+planet 382 0 0 h2o_xlts.xlt h2o_cts_.ct
+
+planet 501 3 0 bnd_xlts.xlt qqq_cts_.ct

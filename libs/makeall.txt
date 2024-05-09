@@ -1,0 +1,21 @@
+directory ':MEMORY:'
+::makelib
+directory '::GRAPHICS:'
+::makelib
+directory '::SOUND:'
+::makelib
+directory '::STRINGS:'
+::makelib
+directory '::TASK:'
+::makelib
+directory '::INPUT:'
+::makelib
+directory '::DECOMP:'
+::makelib
+directory '::MATH:'
+::makelib
+directory '::RESOURCE:'
+::makelib
+directory '::video:'
+::makelib
+directory '::'

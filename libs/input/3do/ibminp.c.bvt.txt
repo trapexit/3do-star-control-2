@@ -1,0 +1,390 @@
+#include "inpintrn.h"
+#include "timlib.h"
+#include "types.h"
+#include "item.h"
+#include "msgport.h"
+#include "kernel.h"
+#include "kernelnodes.h"
+#include "event.h"
+#include "task/3do/task3do.h"
+
+#define MAX_NUM_JOYSTICKS	2
+#define JOYSTICKS_AVAIL		(JoystickFlags >> MAX_NUM_JOYSTICKS)
+#define SET_JOYSTICKS_AVAIL(a)	(JoystickFlags |= ((a) << MAX_NUM_JOYSTICKS))
+#define JOYSTICK_ACTIVE(j)	(JoystickFlags & (1 << (j)))
+#define SET_JOYSTICK_ACTIVE(j)	(JoystickFlags |= (1 << (j)))
+
+static BYTE	JoystickFlags;
+
+static SEMAPHORE	PauseSem;
+static BYTE		PauseKey;
+static BYTE		ExitKey;
+static BYTE		OtherKey;
+
+PROC_PARAMETER(STATIC
+void (* far PauseFunc), (),
+    ARG_VOID
+);
+
+#define messageSize 2048
+
+// Check how many control pads are attached to the system.
+// This code was extracted from "cpdump.c" -- 3do example source.
+static int
+check_active_control_pads (void)
+{
+  Item msgPortItem;
+  Item brokerPortItem;
+  Item msgItem, eventItem;
+  int32 sent;
+  Message *event;
+  MsgPort *msgPort, *listenerPort;
+  PodDescriptionList *pdl;
+  EventBrokerHeader queryHeader, *msgHeader;
+  TagArg msgTags[3];
+
+  // Get handle to Event Broker.
+  brokerPortItem = FindNamedItem(MKNODEID(KERNELNODE,MSGPORTNODE),
+				 EventPortName);
+
+  if (brokerPortItem < 0) 
+  {
+#ifdef DEBUG
+    kprintf("Can't find Event Broker port ---");
+    PrintfSysErr(brokerPortItem);
+#endif /* DEBUG */
+    return (0);
+  }
+  
+  // Create a message port to receive event broker's reply.
+  msgPortItem = CreateMsgPort("pad_test", 0, 0);
+  msgPort = (MsgPort *) LookupItem(msgPortItem);
+ 
+  // Have the event broker tell us about the input devices on the system.
+  queryHeader.ebh_Flavor = EB_DescribePods;
+
+  // Prepare the message to be sent.
+  msgTags[0].ta_Tag = CREATEMSG_TAG_REPLYPORT;
+  msgTags[0].ta_Arg = (void *) msgPortItem;
+  msgTags[1].ta_Tag = CREATEMSG_TAG_DATA_SIZE;
+  msgTags[1].ta_Arg = (void *) messageSize;
+  msgTags[2].ta_Tag = TAG_END;
+  msgItem = CreateItem(MKNODEID(KERNELNODE,MESSAGENODE), msgTags);
+
+  // Send the message to the event broker.
+  sent = SendMsg(brokerPortItem, msgItem, &queryHeader, sizeof queryHeader);
+  
+  // Wait for a response.
+  eventItem = WaitPort(msgPortItem, msgItem);
+  
+  // Extract the data from the reply.
+  event = (Message *) LookupItem(eventItem);
+  msgHeader = (EventBrokerHeader *) event->msg_DataPtr;
+  pdl = (PodDescriptionList *) msgHeader;
+  
+  DeleteMsg (msgItem);
+  DeleteMsgPort (msgPortItem);
+
+#ifdef DEBUG
+kprintf("Detected %d control pad(s) on the system.\n\n", pdl->pdl_PodCount);
+#endif /* DEBUG */
+
+  // is pdl still pointing to valid data after DeleteMsg... calls above???
+  return (pdl->pdl_PodCount);
+}
+
+PROC(
+BOOLEAN InitInput, (Pause, Exit, PFunc),
+    ARG		(BYTE	Pause)
+    ARG		(BYTE	Exit)
+    ARG_END
+    (
+	PROC_PARAMETER(
+	void (*PFunc), (),
+	    ARG_VOID
+	)
+    )
+)
+{
+    PauseKey = Pause;
+    ExitKey = Exit;
+	
+    // Find a unique byte ID not equal to PauseKey, ExitKey, or 0.
+    OtherKey = 1;
+    while (OtherKey == PauseKey || OtherKey == ExitKey)
+	OtherKey++;
+		
+    PauseFunc = PFunc;
+	
+    // Initialize both joysticks for monitoring and see what's out there.
+    InitEventUtility (2L, 0L, 0L);
+	
+    SET_JOYSTICKS_AVAIL (check_active_control_pads ());
+
+    return (FALSE);
+}
+
+PROC(
+BOOLEAN UninitInput, (),
+    ARG_VOID
+)
+{
+    KillEventUtility ();
+    JoystickFlags = 0;
+//PauseSem = ??;
+    PauseKey = ExitKey = OtherKey = 0;
+
+    return (TRUE);
+}
+
+/* === JOYSTICK/JOYSTICK1 flags === */
+#define ControlDown          0x80000000
+#define ControlUp            0x40000000
+#define ControlRight         0x20000000
+#define ControlLeft          0x10000000
+#define ControlA             0x08000000
+#define ControlB             0x04000000
+#define ControlC             0x02000000
+#define ControlStart         0x01000000
+#define ControlX             0x00800000
+#define ControlRightShift    0x00400000
+#define ControlLeftShift     0x00200000
+
+#define JOYMOVE     (ControlDown|ControlUp|ControlRight|ControlLeft)
+#define JOYBUTTONS  (ControlA|ControlB|ControlC|ControlStart|ControlX|ControlRightShift|ControlLeftShift)
+
+static DWORD LastInput;
+static int ThreadJoyId;
+
+static DWORD
+read_joystick (int joy_id)
+{
+    ControlPadEventData cp;
+
+    if (KernelBase->kb_CurrentTask->t_ThreadTask)
+    {
+    	ThreadJoyId = joy_id;
+    	_threedo_add_task(TASK_GET_INPUT);
+	Yield ();
+	return (LastInput);
+    }
+    
+    if (!JOYSTICK_ACTIVE (joy_id))
+	return (0);
+		
+    GetControlPad(joy_id + 1,0,&cp);
+
+    return (cp.cped_ButtonBits);
+}
+
+void
+_ThreeDO_get_input(void)
+{
+    ControlPadEventData cp;
+    
+    if (!JOYSTICK_ACTIVE (ThreadJoyId))
+    {
+    	LastInput = 0;
+	return;
+    }
+	
+    GetControlPad(ThreadJoyId + 1,0,&cp);
+
+    LastInput = cp.cped_ButtonBits;    
+}
+
+PROC(
+INPUT_STATE _get_pause_exit_state, (),
+    ARG_VOID
+)
+{
+    int	i;
+    
+    SetSemaphore (&PauseSem);
+    if (KeyDown (PauseKey))
+    {
+	if (PauseFunc)
+	    (*PauseFunc) ();
+
+	while (KeyDown (PauseKey))
+	    ;
+    }
+    ClearSemaphore (&PauseSem);
+    
+    for (i = 0; i < MAX_NUM_JOYSTICKS; i++)
+    {
+	if (read_joystick (i) & ControlX)
+	{
+	    while (read_joystick (i) & ControlX)
+		;
+	    return (DEVICE_EXIT);
+	}
+    }
+
+    return (0);
+}
+
+PROC(
+INPUT_STATE _get_serial_keyboard_state, (InputRef, InputState),
+    ARG		(INPUT_REF	InputRef)
+    ARG_END	(INPUT_STATE	InputState)
+)
+{
+    SetInputASCII (&InputState, 0 /* GetASCIIKey () */);
+    SetInputDevType (&InputState, KEYBOARD_DEVICE);
+
+    return (InputState);
+}
+
+PROC(
+INPUT_STATE _get_joystick_keyboard_state, (InputRef, InputState),
+    ARG		(INPUT_REF	InputRef)
+    ARG_END	(INPUT_STATE	InputState)
+)
+{
+    return (InputState);
+}
+
+PROC(
+INPUT_STATE _get_joystick_state, (InputRef, InputState),
+    ARG		(INPUT_REF	InputRef)
+    ARG_END	(INPUT_STATE	InputState)
+)
+{
+	DWORD	retval;
+
+	if (JOYSTICK_ACTIVE (GetInputDeviceJoystickPort (InputRef)))
+	{
+		if (retval = read_joystick (GetInputDeviceJoystickPort (InputRef)))
+		{
+			if (retval & ControlLeft)
+				SetInputXComponent (&InputState, -1);
+			else if (retval & ControlRight)
+				SetInputXComponent (&InputState, 1);
+			
+			if (retval & ControlUp)
+				SetInputYComponent (&InputState, -1);
+			else if (retval & ControlDown)
+				SetInputYComponent (&InputState, 1);
+			
+			if (retval & ControlA)
+				InputState |= DEVICE_BUTTON1;
+			if (retval & ControlB)
+				InputState |= DEVICE_BUTTON2;
+			if (retval & ControlStart)
+				InputState |= DEVICE_PAUSE;
+			if (retval & ControlX)
+				InputState |= DEVICE_EXIT;
+			if (retval & ControlC)
+				InputState |= DEVICE_BUTTON3;
+			if (retval & ControlRightShift)
+				InputState |= DEVICE_RIGHTSHIFT;
+			if (retval & ControlLeftShift)
+				InputState |= DEVICE_LEFTSHIFT;
+	
+		}
+	}
+	
+    return (InputState);
+}
+
+PROC(
+BOOLEAN _joystick_port_active, (port),
+    ARG_END	(COUNT		port)
+)
+{
+    if (port < JOYSTICKS_AVAIL)
+	SET_JOYSTICK_ACTIVE (port);
+    return (JOYSTICK_ACTIVE (port)); 
+}
+
+PROC(
+INPUT_STATE AnyButtonPress, (),
+    ARG_VOID
+)
+{
+    int	i;
+
+    SetSemaphore (&PauseSem);
+    if (KeyDown (PauseKey))
+    {
+	if (PauseFunc)
+	    (*PauseFunc) ();
+
+	while (KeyDown (PauseKey))
+	    ;
+    }
+    ClearSemaphore (&PauseSem);
+
+    for (i = 0; i < JOYSTICKS_AVAIL; i++)
+	if (read_joystick (i))
+	    return (DEVICE_BUTTON1);
+	
+    return (0);
+}
+
+// The no pause version.
+PROC(
+INPUT_STATE AnyButtonPressNoPause, (),
+    ARG_VOID
+)
+{
+    int	i;
+    
+    for (i = 0; i < JOYSTICKS_AVAIL; i++)
+	if (read_joystick (i))
+	    return (DEVICE_BUTTON1);
+	
+    return (0);
+}
+
+PROC(
+void FlushInput, (),
+    ARG_VOID
+)
+{
+}
+
+BYTE
+ASCIIToScan (BYTE a)
+{
+    return (a);
+}
+
+//  Return true if Pause is hit on either joypad.
+BYTE
+KeyDown (BYTE k)
+{
+    if (k == PauseKey)
+    {
+	int	i;
+	
+	for (i = 0; i < JOYSTICKS_AVAIL; i++)
+	    if (read_joystick (i) & ControlStart)
+		return (1);
+    }
+    
+    return (0);
+}
+
+// Return Pause, Exit, or Other key scan byte if hit on either joypad.
+BYTE
+KeyHit (void)
+{
+    int		i;
+    
+    for (i = 0; i < JOYSTICKS_AVAIL; i++)
+    {
+	DWORD	retval;
+	
+	if ((retval = read_joystick (i)) & ControlStart)
+	    return (PauseKey);
+	else if (retval & ControlX)
+	    return (ExitKey);
+	else if (retval & (ControlA | ControlB | ControlC))
+	    return (OtherKey);
+    }
+	
+    return (0);
+}
+

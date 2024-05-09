@@ -1,0 +1,1224 @@
+#include "Portfolio.h"
+#include "Init3DO.h"
+#include "Parse3DO.h"
+#include "Utils3DO.h"
+#include "filefunctions.h"
+#include "BlockFile.h"
+
+#define INITIAL_DIRECTORY	"$boot/starcon"
+
+#ifdef DEBUG
+#define PRD(s)		printf s
+#define SYSERR(e)	PrintfSysErr (e)
+#else /* DEBUG */
+#define PRD(s)
+#define SYSERR(e)
+#endif /* DEBUG */
+
+#define NUMBER_OF_SCREENS	2
+
+#define SHADOW_COLOR		(0x18c6) // Shadow color... sleazy
+
+#define PIXC_DUP(v)		(((v) << PPMP_0_SHIFT) | ((v) << PPMP_1_SHIFT))
+#define PIXC_UNCODED16		(PIXC_DUP (PPMPC_MF_8 | PPMPC_SF_8))
+
+#define SET_CEL_FLAGS(c,f)	((c)->ccb_Flags |= (f))
+#define CLR_CEL_FLAGS(c,f)	((c)->ccb_Flags &= ~(f))
+
+#define CEL_FLAGS \
+	(CCB_SPABS | CCB_PPABS | CCB_YOXY | CCB_ACW | CCB_ACCW | CCB_LDSIZE | CCB_CCBPRE \
+	| CCB_LDPRS | CCB_LDPPMP | CCB_ACE | CCB_LCE | CCB_PLUTPOS | CCB_BGND)
+
+#define NUM_NORMAL_CELS		500
+
+#define NUMBER_OF_CLUTVALS	32
+
+#define SCREEN_WIDTH		320
+#define SCREEN_HEIGHT		240
+
+typedef struct
+{
+    int32 	sc_curScreen;
+    int32 	sc_nFrameBufferPages;
+    int32 	sc_nFrameByteCount;
+    Item 	sc_Screens[NUMBER_OF_SCREENS];
+    Item	sc_BitmapItems[NUMBER_OF_SCREENS];
+    Bitmap	*sc_Bitmaps[NUMBER_OF_SCREENS];
+} ourScreenContext;
+
+static ourScreenContext	theScreen;
+static Item		theScreenGroup;
+
+static CCB	*cel_array;
+static CCB	*cur_ccb, *final_ccb;
+
+static Item	VRAMIOReq;
+
+static void
+BlackenScreen (uint32 mask, int32 frame_ct)
+{
+    int32		i;
+    uint32	colorEntries[NUMBER_OF_CLUTVALS], *ce;
+
+    ce = colorEntries;
+    for (i = 0; i < NUMBER_OF_CLUTVALS; i++)
+	*ce++ = MakeCLUTColorEntry (i, 0, 0, 0);
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (mask & (1UL << i))
+    	    SetScreenColors (theScreen.sc_Screens[i],
+ 		    colorEntries, NUMBER_OF_CLUTVALS);
+    }
+	
+    SetScreenColor (0, MakeCLUTColorEntry (NUMBER_OF_CLUTVALS, 0, 0, 0));
+}
+
+static void
+LightenScreen (uint32 mask, int32 frame_ct)
+{
+    int32		i;
+    uint32	colorEntries[NUMBER_OF_CLUTVALS], *ce;
+
+    ce = colorEntries;
+    for (i = 0; i < NUMBER_OF_CLUTVALS; i++)
+    {
+	ubyte	color;
+	
+	color = (ubyte)((i << 3) | (i >> 2));
+	*ce++ = MakeCLUTColorEntry (i, color, color, color);
+    }
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (mask & (1UL << i))
+    	    SetScreenColors (theScreen.sc_Screens[i],
+ 		    colorEntries, NUMBER_OF_CLUTVALS);
+    }
+
+// ??????????
+    SetScreenColor (0, MakeCLUTColorEntry (NUMBER_OF_CLUTVALS, 0, 0, 0));
+}
+
+static bool
+ourOpenGraphics (ourScreenContext *sc, Item *gItem, int32 h)
+{
+    Int32	i, w;
+    int32	bmpages, bmsize;
+    TagArg	taScreenTags[6], *t;
+    void	*bmbuf[MAXSCREENS];
+    extern Item	SPORTDevice;
+
+    if (!SPORTDevice)
+    {
+	if (OpenGraphicsFolio () || !OpenSPORT ())
+	{
+	    PRD (("Cannot open graphics folio\n"));
+	    return FALSE;
+	}
+    }
+
+    w = SCREEN_WIDTH;
+    bmpages = (w * 2 * h
+	    + GrafBase->gf_VRAMPageSize - 1) 
+	    / GrafBase->gf_VRAMPageSize;
+    bmsize = bmpages * GrafBase->gf_VRAMPageSize;
+
+#ifdef ALLOC_SEPARATELY    
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+	bmbuf[i] = 0;
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (!(bmbuf[i] = AllocMem (bmsize,
+		MEMTYPE_VRAM | MEMTYPE_FILL | 0)))
+	    goto Failure;
+    }
+#else
+    bmbuf[0] = AllocMem (bmsize * NUMBER_OF_SCREENS,
+	    MEMTYPE_VRAM | MEMTYPE_FILL | 0);
+    if (!bmbuf[0])
+	goto Failure;
+    for (i = 1; i < NUMBER_OF_SCREENS; i++)
+	bmbuf[i] = (void *)((char *)bmbuf[i - 1] + bmsize);
+#endif
+	
+    t = taScreenTags;
+    t->ta_Tag = CSG_TAG_SCREENCOUNT;
+    t->ta_Arg = (void *)NUMBER_OF_SCREENS;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPCOUNT;
+    t->ta_Arg = (void *)NUMBER_OF_SCREENS;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPBUF_ARRAY;
+    t->ta_Arg = (void *)bmbuf;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPWIDTH_ARRAY;
+    t->ta_Arg = (void *)&w;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPHEIGHT_ARRAY;
+    t->ta_Arg = (void *)&h;
+    t++;
+    t->ta_Tag = CSG_TAG_DONE;
+	
+    *gItem = CreateScreenGroup (&(sc->sc_Screens[0]), taScreenTags);
+    if (*gItem < 0)
+    {
+	PRD (("Cannot create screen group"));
+	SYSERR (*gItem);
+	goto Failure;
+    }
+    
+    AddScreenGroup (*gItem, NULL);
+
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	Screen	*screen;
+	
+	if ((screen = (Screen *)LookupItem (sc->sc_Screens[i])) == NULL) 
+	{
+	    PRD (("%d: Cannot locate screen\n", i));
+	    goto Failure;
+	}
+	
+	sc->sc_BitmapItems[i] = screen->scr_TempBitmap->bm.n_Item;
+	sc->sc_Bitmaps[i] = screen->scr_TempBitmap;
+	EnableHAVG (sc->sc_Screens[i]);
+	EnableVAVG (sc->sc_Screens[i]);
+    }
+
+    sc->sc_nFrameBufferPages = bmpages;
+    sc->sc_nFrameByteCount = bmsize;
+    sc->sc_curScreen = 0;
+
+    return TRUE;
+    
+Failure:
+#ifdef ALLOC_SEPARATELY
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (bmbuf[i])
+	    FreeMem (bmbuf[i], bmsize);
+    }
+#else
+    if (bmbuf[0])
+	FreeMem (bmbuf[0], bmsize * NUMBER_OF_SCREENS);
+#endif
+    
+    return FALSE;
+}
+
+static void
+ourCloseGraphics (ourScreenContext *sc, Item sgItem)
+{
+    int32		i;
+    int32	errorCode;
+
+    if ((errorCode = RemoveScreenGroup (sgItem)) < 0)
+    {
+	PRD (("RemoveScreenGroup failed -- "));
+	SYSERR (errorCode);
+    }
+
+    if ((errorCode = DeleteItem (sgItem)) < 0)
+    {
+	PRD (("DeleteScreenGroup failed -- "));
+	SYSERR (errorCode);
+    }
+    
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	Screen	*screen;
+		
+	screen = (Screen *)LookupItem (sc->sc_Screens[i]);
+	if ((errorCode = DeleteItem (screen->scr_VDLItem)) < 0)		
+	{
+	    PRD (("%d: DeleteItem of VDL failed -- ", i));
+	    SYSERR (errorCode);
+	}
+    }
+
+#ifdef ALLOC_SEPARATELY
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	FreeMem (sc->sc_Bitmaps[i]->bm_Buffer, sc->sc_nFrameByteCount);
+	bmbuf[i] = 0;
+    }
+#else
+    FreeMem (sc->sc_Bitmaps[0]->bm_Buffer,
+	    sc->sc_nFrameByteCount * NUMBER_OF_SCREENS);
+#endif
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if ((errorCode = DeleteItem (sc->sc_BitmapItems[i])) < 0)
+	{
+	    PRD (("%d: DeleteItem of Bitmap failed -- ", i));
+	    SYSERR (errorCode);
+	}
+	if ((errorCode = DeleteItem (sc->sc_Screens[i])) < 0)
+	{
+	    PRD (("%d: DeleteItem of Screen failed -- ", i));
+	    SYSERR (errorCode);
+	}
+    }
+
+    ScavengeMem (); // necessary after FreeMem to return memory to system
+}
+
+int32
+Init3DO (void)
+{
+    if (ourOpenGraphics (&theScreen, &theScreenGroup, SCREEN_HEIGHT))
+    {
+	int32	i;
+
+	if (ChangeDirectory (INITIAL_DIRECTORY) < 0)
+	    return (0);
+
+	if (!VRAMIOReq)
+	    VRAMIOReq = GetVRAMIOReq ();
+
+	if (!cel_array
+		&& !(cel_array = (CCB *)AllocMem (
+			sizeof (CCB) * NUM_NORMAL_CELS,
+			MEMTYPE_ANY | MEMTYPE_FILL | 0)))
+	    return (0);
+
+	for (cur_ccb = &cel_array[0], i = NUM_NORMAL_CELS;
+		i > 0; i--, cur_ccb++)
+	{
+	    cur_ccb->ccb_Flags = CEL_FLAGS;
+	    cur_ccb->ccb_NextPtr = (CCB *)MakeCCBRelative (&cur_ccb->ccb_NextPtr, cur_ccb + 1);
+	}
+	
+	cur_ccb = &cel_array[0];
+	final_ccb = &cel_array[NUM_NORMAL_CELS - 1];
+	
+	for (i = 0; i < NUMBER_OF_SCREENS; i++)
+	{
+	    SetCEControl (theScreen.sc_BitmapItems[i],
+		    B15POS_PDC | CFBDLSB_CFBD0 | PDCLSB_PDC0,
+		    B15POS_MASK | CFBDLSB_MASK | PDCLSB_MASK);
+
+	    SetVRAMPages (VRAMIOReq, theScreen.sc_Bitmaps[i]->bm_Buffer,
+		    0, theScreen.sc_nFrameBufferPages, ~0);
+	}
+
+	BlackenScreen ((1UL << 0) | (1UL << 1), 0);
+	DisplayScreen (theScreen.sc_Screens[theScreen.sc_curScreen], 0);
+	LightenScreen ((1UL << 0) | (1UL << 1), 0);
+
+	return (1);
+    }
+	
+    return (0);
+}
+
+void
+Uninit3DO (void)
+{
+    theScreen.sc_curScreen = !theScreen.sc_curScreen;
+    SetVRAMPages (VRAMIOReq,
+	    theScreen.sc_Bitmaps[theScreen.sc_curScreen]->bm_Buffer,
+	    0, theScreen.sc_nFrameBufferPages, ~0);
+
+    DisplayScreen (theScreen.sc_Screens[theScreen.sc_curScreen], 0);
+    BlackenScreen (1UL << theScreen.sc_curScreen, 0);
+    
+    if (cel_array)
+    {
+	FreeMem (cel_array, sizeof (CCB) * NUM_NORMAL_CELS);
+	cel_array = 0;
+    }
+
+    if (VRAMIOReq)
+    {
+	DeleteItem (VRAMIOReq);
+	VRAMIOReq = 0;
+    }
+
+    if (theScreenGroup)
+    {
+	ourCloseGraphics (&theScreen, theScreenGroup);
+	theScreenGroup = 0;
+    }
+}
+
+void
+batch_cels (int32 flush)
+{
+    Item	BitmapItem;
+    CCB		*last_ccb;
+
+    BitmapItem = theScreen.sc_BitmapItems[!theScreen.sc_curScreen];
+	
+    if (cur_ccb != &cel_array[0])
+    {
+	last_ccb = --cur_ccb;
+	SET_CEL_FLAGS (last_ccb, CCB_LAST);
+	cur_ccb = &cel_array[0];
+
+	DrawCels (BitmapItem, (CCB *)cel_array);
+
+	CLR_CEL_FLAGS (last_ccb, CCB_LAST);
+    }
+
+    if (flush)
+    {
+	theScreen.sc_curScreen = !theScreen.sc_curScreen;
+	DisplayScreen (theScreen.sc_Screens[theScreen.sc_curScreen], 0);
+    }
+}
+
+void
+blt_cel (CCB *ccb, int32 x, int32 y, int32 w, int32 h, Point *pt)
+{
+    if (cur_ccb == final_ccb)
+	batch_cels (0);
+	
+    *cur_ccb = *ccb;
+    CLR_CEL_FLAGS (cur_ccb, CCB_NPABS | CCB_LAST);
+    SET_CEL_FLAGS (cur_ccb, CCB_PPABS | CCB_ACE | CCB_LCE);
+    cur_ccb->ccb_NextPtr = (CCB *)MakeCCBRelative (&cur_ccb->ccb_NextPtr, cur_ccb + 1);
+
+    if (!h)
+    {
+	cur_ccb->ccb_PIXC = PIXC_DUP (0x85c2UL);
+	SET_CEL_FLAGS (cur_ccb, CCB_USEAV);
+	cur_ccb->ccb_XPos = x;
+	cur_ccb->ccb_YPos = y;
+	cur_ccb++;
+
+	return;
+    }
+
+    if ((cur_ccb->ccb_PRE0 & PRE0_BPP_MASK) == PRE0_BPP_16)
+	cur_ccb->ccb_SourcePtr = (CelData *)((int32 *)cur_ccb->ccb_SourcePtr
+		+ y * (((cur_ccb->ccb_Width + 1) & ~1) >> 1) + (x >> 1));
+    else if ((cur_ccb->ccb_PRE0 & PRE0_BPP_MASK) == PRE0_BPP_8)
+	cur_ccb->ccb_SourcePtr = (CelData *)((int32 *)cur_ccb->ccb_SourcePtr
+		+ y * (((cur_ccb->ccb_Width + 20 + 3) & ~3) >> 2) + (x >> 2));
+    cur_ccb->ccb_PRE0 &= ~PRE0_VCNT_MASK;
+    cur_ccb->ccb_PRE1 &= ~PRE1_TLHPCNT_MASK;
+    cur_ccb->ccb_PRE0 |= (h - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT;
+    cur_ccb->ccb_PRE1 |= (w - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT;
+
+    cur_ccb->ccb_Width = w;
+    cur_ccb->ccb_Height = h;
+
+    myMapCel (cur_ccb, pt);
+
+    cur_ccb++;
+}
+
+static ubyte	pre_scaled;
+static int32	x0[30], x1[30], y0[30], y1[30];
+static ubyte	ystep[30];
+
+static void
+build_steps (int32 src_cy)
+{
+    int32	y, i, c, inc;
+
+    c = 1;
+    inc = 1;
+    y = 0;
+    for (i = 0; y < src_cy; ++i)
+    {
+	ystep[i] = (ubyte)c;
+	y += c;
+	if (y > (src_cy >> 1) && inc == 1)
+	{
+	    y -= c;
+	    ystep[i] = (ubyte)(src_cy - (y << 1));
+	    if (ystep[i] == 0)
+		--i;
+	    else
+		y += ystep[i];
+	    
+	    inc = -1;
+	}
+	c += inc;
+    }
+
+    ystep[i] = 1;
+    
+#if 0
+y = 0;
+for (i = 0; y < src_cy; i++)
+{
+    printf ("ystep[%d] = %d\n", i, ystep[i]);
+    y += ystep[i];
+}
+#endif
+}
+
+static void
+build_tables (int32 src_cy, int32 da)
+{
+    int32	src_y0, src_h, i, r;
+
+    if (pre_scaled)
+	r = src_cy;
+    else
+	r = src_cy * 14 / 22;
+
+    src_cy >>= 1;
+    
+    build_steps (src_cy);
+    
+    for (src_y0 = 0, i = 0; src_y0 <= src_cy; src_y0 += ystep[i], i++)
+    {
+	int32	dx0, dy0, a;
+
+	src_h = ystep[i];	
+
+	if (src_y0 + src_h > src_cy
+		&& (src_h = src_cy - src_y0 + 1) == 0)
+	    return;
+
+	if (pre_scaled)
+	{
+	    dy0 = src_cy - src_y0;
+	    dx0 = SqrtF16 ((src_cy * src_cy - dy0 * dy0) << 16);
+	    dy0 <<= 16;
+	}
+	else
+	{
+	    dy0 = src_cy - src_y0;
+	    dx0 = SqrtF16 ((src_cy * src_cy - dy0 * dy0) << 16) * 14 / 22;
+	    dy0 = (dy0 << 16) * 14 / 22;
+	}
+
+	a = Atan2F16 (-dx0, -dy0);
+	a += da << 16;
+	x0[i] = r * CosF16 (a);
+	y0[i] = r * SinF16 (a);
+	a = Atan2F16 (dx0, -dy0);
+	a += da << 16;
+	x1[i] = r * CosF16 (a);
+	y1[i] = r * SinF16 (a);
+	
+	x0[i] >>= 1;
+	y0[i] >>= 1;
+	x1[i] >>= 1;
+	y1[i] >>= 1;
+#if 0
+printf ("%d: %d  ", i, src_y0);
+printf ("%d,%d -- ", x0[i] >> 16, y0[i] >> 16);
+printf ("%d,%d\n", x1[i] >> 16, y1[i] >> 16);
+#endif
+    }
+}
+
+#define WIDTH		210//(chrccb->ccb_Width)
+#define HEIGHT		67//(chrccb->ccb_Height)
+#define XBANDS		6
+
+#if 0
+static void
+draw_band (CCB *chrccb, int32 x, int32 src_y0, int32 src_cy,
+	int32 src_ws[], int32 src_h, int32 dst_cx, int32 dst_cy, int32 band)
+{
+    int32	i, dst_x0, dst_y0, dst_x1, dst_y1, dx0, dy0, dx1, dy1;
+    int32	xerror0, yerror0, xerror1, yerror1,
+		xincr0, xincr1, yincr0, yincr1;
+    int32	src_x0;
+    Point	quadpts[4];
+    int32	d[XBANDS] = { 7, 18, 25, 25, 18, 7 };
+
+    if (src_y0 > src_cy)
+    {
+	if (src_y0 + src_h > HEIGHT
+		&& (src_h = HEIGHT - src_y0 + 1) == 0)
+	    return;
+	dx0 = x1[band + 1];
+	dy0 = y1[band + 1];
+	dx1 = x1[band];
+	dy1 = y1[band];
+	dst_x0 = dst_cx - dx0;
+	dst_y0 = dst_cy - dy0;
+	dst_x1 = dst_cx - dx1;
+	dst_y1 = dst_cy - dy1;
+	dx0 -= x0[band + 1];
+	dy0 -= y0[band + 1];
+	dx1 -= x0[band];
+	dy1 -= y0[band];
+    }
+    else
+    {
+	if (src_y0 + src_h > src_cy
+		&& (src_h = src_cy - src_y0 + 1) == 0)
+	    return;
+	dx0 = x0[band];
+	dy0 = y0[band];
+	dx1 = x0[band + 1];
+	dy1 = y0[band + 1];
+	dst_x0 = dst_cx + dx0;
+	dst_y0 = dst_cy + dy0;
+	dst_x1 = dst_cx + dx1;
+	dst_y1 = dst_cy + dy1;
+	dx0 = x1[band] - dx0;
+	dy0 = y1[band] - dy0;
+	dx1 = x1[band + 1] - dx1;
+	dy1 = y1[band + 1] - dy1;
+    }
+
+    if (dx0 >= 0)
+	xincr0 = 1;
+    else
+    {
+	xincr0 = -1;
+	dx0 = -dx0;
+    }
+    if (dy0 >= 0)
+	yincr0 = 1;
+    else
+    {
+	yincr0 = -1;
+	dy0 = -dy0;
+    }
+    xerror0 = yerror0 = 100;
+	
+    if (dx1 >= 0)
+	xincr1 = 1;
+    else
+    {
+	xincr1 = -1;
+	dx1 = -dx1;
+    }
+    if (dy1 >= 0)
+	yincr1 = 1;
+    else
+    {
+	yincr1 = -1;
+	dy1 = -dy1;
+    }
+    xerror1 = yerror1 = 100;
+
+    src_x0 = x;
+	
+    for (i = 0; i < XBANDS; i++)
+    {
+	int32	j, k, dd, dd1, sw, sw1, sx, src_w;
+
+	src_w = src_ws[i];
+	dd = d[i];
+	dd1 = 0;
+	sw = src_w;
+	sx = src_x0;
+	
+	src_x0 += src_w;
+	if (src_x0 >= WIDTH)
+	    src_x0 -= WIDTH;
+	else if (src_x0 < 0)
+	    src_x0 += WIDTH;
+
+	if (sx + src_w > WIDTH)
+	{
+	    sw = WIDTH - sx;
+	    sw1 = src_w - sw;
+	    dd1 = dd * sw1 / src_w;
+	    dd -= dd1;
+	}
+
+Next:		
+	quadpts[0].pt_X = dst_x0;
+	quadpts[0].pt_Y = dst_y0;
+	quadpts[3].pt_X = dst_x1;
+	quadpts[3].pt_Y = dst_y1;
+	
+	j = dx0 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_x0 += (xincr0 * j);
+	if ((xerror0 -= k) <= 0)
+	{
+	    dst_x0 += xincr0;
+	    xerror0 += 100;
+	}
+	
+	j = dy0 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_y0 += (yincr0 * j);
+	if ((yerror0 -= k) <= 0)
+	{
+	    dst_y0 += yincr0;
+	    yerror0 += 100;
+	}
+	
+	j = dx1 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_x1 += (xincr1 * j);
+	if ((xerror1 -= k) <= 0)
+	{
+	    dst_x1 += xincr1;
+	    xerror1 += 100;
+	}
+	
+	j = dy1 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_y1 += (yincr1 * j);
+	if ((yerror1 -= k) <= 0)
+	{
+	    dst_y1 += yincr1;
+	    yerror1 += 100;
+	}
+
+	quadpts[1].pt_X = dst_x0;
+	quadpts[1].pt_Y = dst_y0;
+	quadpts[2].pt_X = dst_x1;
+	quadpts[2].pt_Y = dst_y1;
+
+	blt_cel (chrccb,
+		sx,
+		src_y0,
+		sw,
+		src_h,
+		quadpts);
+		
+	if (dd1)
+	{
+	    dd = dd1;
+	    dd1 = 0;
+	    sx = 0;
+	    sw = sw1;
+	    goto Next;
+	}
+    }
+}
+#else
+static void
+draw_band (CCB *chrccb, int32 x, int32 src_y0, int32 src_cy,
+	int32 src_ws[], int32 src_h, int32 dst_cx, int32 dst_cy, int32 band)
+{
+    int32	i, dst_x0, dst_y0, dst_x1, dst_y1, dx0, dy0, dx1, dy1;
+    int32	xerror0, yerror0, xerror1, yerror1,
+		xincr0, xincr1, yincr0, yincr1;
+    int32	src_x0;
+    Point	quadpts[4];
+    int32	d[XBANDS] = { 7, 18, 25, 25, 18, 7 };
+
+    if (src_y0 > src_cy)
+    {
+	if (src_y0 + src_h > HEIGHT
+		&& (src_h = HEIGHT - src_y0 + 1) == 0)
+	    return;
+	dx0 = x1[band + 1];
+	dy0 = y1[band + 1];
+	dx1 = x1[band];
+	dy1 = y1[band];
+	dst_x0 = dst_cx - dx0;
+	dst_y0 = dst_cy - dy0;
+	dst_x1 = dst_cx - dx1;
+	dst_y1 = dst_cy - dy1;
+	dx0 -= x0[band + 1];
+	dy0 -= y0[band + 1];
+	dx1 -= x0[band];
+	dy1 -= y0[band];
+    }
+    else
+    {
+	if (src_y0 + src_h > src_cy
+		&& (src_h = src_cy - src_y0 + 1) == 0)
+	    return;
+	dx0 = x0[band];
+	dy0 = y0[band];
+	dx1 = x0[band + 1];
+	dy1 = y0[band + 1];
+	dst_x0 = dst_cx + dx0;
+	dst_y0 = dst_cy + dy0;
+	dst_x1 = dst_cx + dx1;
+	dst_y1 = dst_cy + dy1;
+	dx0 = x1[band] - dx0;
+	dy0 = y1[band] - dy0;
+	dx1 = x1[band + 1] - dx1;
+	dy1 = y1[band + 1] - dy1;
+    }
+
+    if (dx0 >= 0)
+	xincr0 = 1;
+    else
+    {
+	xincr0 = -1;
+	dx0 = -dx0;
+    }
+    if (dy0 >= 0)
+	yincr0 = 1;
+    else
+    {
+	yincr0 = -1;
+	dy0 = -dy0;
+    }
+    xerror0 = yerror0 = 100;
+	
+    if (dx1 >= 0)
+	xincr1 = 1;
+    else
+    {
+	xincr1 = -1;
+	dx1 = -dx1;
+    }
+    if (dy1 >= 0)
+	yincr1 = 1;
+    else
+    {
+	yincr1 = -1;
+	dy1 = -dy1;
+    }
+    xerror1 = yerror1 = 100;
+
+    src_x0 = x;
+	
+    for (i = 0; i < XBANDS; i++)
+    {
+	int32	j, k, dd, src_w;
+
+	dd = d[i];
+	
+	quadpts[0].pt_X = dst_x0;
+	quadpts[0].pt_Y = dst_y0;
+	quadpts[3].pt_X = dst_x1;
+	quadpts[3].pt_Y = dst_y1;
+	
+	j = dx0 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_x0 += (xincr0 * j);
+	if ((xerror0 -= k) <= 0)
+	{
+	    dst_x0 += xincr0;
+	    xerror0 += 100;
+	}
+	
+	j = dy0 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_y0 += (yincr0 * j);
+	if ((yerror0 -= k) <= 0)
+	{
+	    dst_y0 += yincr0;
+	    yerror0 += 100;
+	}
+	
+	j = dx1 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_x1 += (xincr1 * j);
+	if ((xerror1 -= k) <= 0)
+	{
+	    dst_x1 += xincr1;
+	    xerror1 += 100;
+	}
+	
+	j = dy1 * dd;
+	j = DivRemS32 (&k, j, 100);
+	dst_y1 += (yincr1 * j);
+	if ((yerror1 -= k) <= 0)
+	{
+	    dst_y1 += yincr1;
+	    yerror1 += 100;
+	}
+
+	quadpts[1].pt_X = dst_x0;
+	quadpts[1].pt_Y = dst_y0;
+	quadpts[2].pt_X = dst_x1;
+	quadpts[2].pt_Y = dst_y1;
+
+	src_w = src_ws[i];
+	blt_cel (chrccb,
+		src_x0,
+		src_y0,
+		src_w,
+		src_h,
+		quadpts);
+		
+	src_x0 += src_w;
+	if (src_x0 >= WIDTH)
+	    src_x0 -= WIDTH;
+	else if (src_x0 < 0)
+	    src_x0 += WIDTH;
+    }
+}
+#endif
+
+#define WRAP_EXTRA	20
+#define XLATE_TAB_SIZE	(256 * sizeof (char))
+#define CMAP_SIZE	(3 * 128 * sizeof (char))
+
+static char *
+load_elevations (Stream *fp)
+{
+    char	*data, *p;
+    int32	linebytes, ct;
+
+    linebytes = (WIDTH + WRAP_EXTRA + 3) & ~3;
+    if (!(data = (char *)malloc (linebytes * HEIGHT)))
+	return (0);
+	
+    p = data;
+    ct = HEIGHT;
+    do
+    {
+	char	*pp;
+	
+	ReadDiskStream (fp, p, WIDTH);
+	pp = p + WIDTH;
+	memcpy (pp, p, WRAP_EXTRA);
+	p += linebytes;
+    } while (--ct);
+	
+    return (data);
+}
+
+static char *
+load_xlat_tab (char *file)
+{
+    Stream	*fp;
+    char	*data;
+    
+    data = 0;
+    if (fp = OpenDiskStream (file, 0))
+    {
+#define XLATE_TAB_HDR	20
+	SeekDiskStream (fp, XLATE_TAB_HDR, SEEK_SET);
+	data = (char *)malloc (XLATE_TAB_SIZE);
+	ReadDiskStream (fp, data, XLATE_TAB_SIZE);
+	CloseDiskStream (fp);
+{
+    int	i;
+    
+    printf ("cmap: \n");
+    for (i = 0; i < XLATE_TAB_SIZE; i++)
+    {
+	printf ("%d ", data[i]);
+	if (i % 16 == 15)
+	    printf ("\n");
+    }
+}
+    }
+    
+    return (data);
+}
+
+static char *
+load_cmap (char *file)
+{
+    Stream	*fp;
+    char	*data;
+    
+    data = 0;
+    if (fp = OpenDiskStream (file, 0))
+    {
+#define CMAP_HDR	28
+	SeekDiskStream (fp, CMAP_HDR, SEEK_SET);
+	data = (char *)malloc (CMAP_SIZE);
+	ReadDiskStream (fp, data, CMAP_SIZE);
+	CloseDiskStream (fp);
+{
+    int	i;
+    
+    printf ("xlate: \n");
+    for (i = 0; i < 128; i++)
+    {
+	int	j;
+	
+	j = i * 3;
+	printf ("%d: ", i);
+	printf ("%d %d %d\n", data[j], data[j + 1], data[j + 2]);
+    }
+}
+    }
+    
+    return (data);
+}
+
+typedef struct
+{
+    char	*elev;
+    char	*trans;
+    char	*cmap;
+    int32	*image;
+} PLANET;
+
+static int32
+xlate_topography (PLANET *planet)
+{
+    int32	x, y;
+    int32	linebytes;
+    char	*elevp;
+    int32	*image, *imagep;
+
+    linebytes = (WIDTH + WRAP_EXTRA + 3) & ~3;
+    image = (int32 *)malloc ((linebytes * HEIGHT) << 1);
+    if (!image)
+	return (0);
+	
+    imagep = image;
+    elevp = planet->elev;
+    for (y = 0; y < HEIGHT; y++)
+    {
+	char	*ep;
+	int32	*ip;
+	
+	ep = elevp;
+	ip = imagep;
+	for (x = 0; x < linebytes; x += 2)
+	{
+	    int32	hi, lo;
+	    char	*cp;
+	    
+	    hi = planet->trans[*ep++];
+	    cp = &planet->cmap[hi];
+	    hi = (int32)((*cp >> 1) | (*(cp + 1) >> 1) | (*(cp + 2) >> 1));
+	    lo = planet->trans[*ep];
+	    cp = &planet->cmap[lo];
+	    lo = (int32)((*cp >> 1) | (*(cp + 1) >> 1) | (*(cp + 2) >> 1));
+	    *ip++ = ((hi << 16) | lo) & ~0x80008000;
+	}
+	
+	elevp += linebytes;
+	imagep += (linebytes >> 1);
+    }
+    
+    planet->image = image;
+    
+    return (1);
+}
+
+static int32
+load_planet (char *file, PLANET *planet, int32 ss_index, int32 pl_index, int32 mn_index)
+{
+    Stream	*fp;
+    int32	retval;
+    
+    retval = 0;
+    if (fp = OpenDiskStream (file, 0))
+    {
+	long	pl_offs;
+
+	SeekDiskStream (fp, ss_index * sizeof (long), SEEK_SET);
+	ReadDiskStream (fp, (char *)&pl_offs, sizeof (pl_offs));
+	SeekDiskStream (fp, pl_offs + pl_index * sizeof (long), SEEK_SET);
+	ReadDiskStream (fp, (char *)&pl_offs, sizeof (pl_offs));
+	SeekDiskStream (fp, pl_offs + mn_index * (WIDTH * HEIGHT), SEEK_SET);
+	
+	if ((planet->elev = load_elevations (fp))
+		&& (planet->trans = load_xlat_tab ("BND_XLTS.XLT"))
+		&& (planet->cmap = load_cmap ("BND_CTS_.CT")))
+	{
+	    if (xlate_topography (planet))
+		retval = 1;
+	}
+	
+	CloseDiskStream (fp);
+    }
+    
+    return (retval);
+}
+
+int
+main (int32 argc, char **argv)
+{
+#define ONE_SECOND	(audio_rate)
+    long	chrsize, lumsize;
+    void	*chrbuf, *lumbuf;
+    int32	i, x, da, src_y0, src_w[XBANDS];
+    int32	src_cy, dst_cx, dst_cy;
+    long	start_time, audio_rate;
+    CCB		*chrccb, *lumccb, ccb;
+    char	celfile[80], lumfile[80];
+    int32	incr;
+    PLANET	planet;
+int32	ticks, ct;
+
+ticks = ct = 0;
+    if (!Init3DO ())
+	exit (0);
+
+    strcpy (celfile, "earth.chr");
+    strcpy (lumfile, "earth.lum");
+    da = 0;
+    incr = 1;
+
+#if 0
+    argc--;
+    argv++;
+
+    while (argc)
+    {
+	char	*s;
+	
+	s = *argv;
+	if ((*s >= '0' && *s <= '9')
+		|| *s == '-')
+	{
+	    if (*s == '-')
+		incr = -1;
+	    da = atoi (s);
+	}
+	else
+	{
+	    sprintf (celfile, "%s.chr", s);
+	    sprintf (lumfile, "%s.lum", s);
+	}
+	
+	argc--;
+	argv++;
+    }
+    
+    if (!(chrbuf = LoadFile (celfile, &chrsize, MEMTYPE_ANY))
+	    || !(chrccb = ParseCel (chrbuf, chrsize)))
+	exit (0);
+	
+    if ((lumbuf = LoadFile (lumfile, &lumsize, MEMTYPE_ANY)))
+	lumccb = ParseCel (lumbuf, lumsize);
+    else
+	lumccb = 0;
+#else
+    --argc;
+    ++argv;
+    
+    if (argc == 3)
+	load_planet ("planet.dat", &planet, atoi (*argv), atoi (*(argv + 1)), atoi (*(argv + 2)));
+    else if (argc == 2)
+	load_planet ("planet.dat", &planet, 0, atoi (*argv), atoi (*(argv + 1)));
+    else if (argc == 1)
+	load_planet ("planet.dat", &planet, 0, 0, atoi (*(argv + 1)));
+    else
+	load_planet ("planet.dat", &planet, 0, 0, 0);
+
+    chrccb = &ccb;
+    ccb.ccb_Flags = CEL_FLAGS;
+    ccb.ccb_Width = WIDTH;
+    ccb.ccb_Height = HEIGHT;
+    ccb.ccb_PRE0 =
+	    PRE0_BGND
+	    | ((HEIGHT - PRE0_VCNT_PREFETCH) << PRE0_VCNT_SHIFT)
+	    | PRE0_LINEAR
+	    | PRE0_BPP_16;
+    ccb.ccb_PRE1 =
+	    PRE1_TLLSB_PDC0
+	    | ((WIDTH - PRE1_TLHPCNT_PREFETCH) << PRE1_TLHPCNT_SHIFT)
+	    | (((((WIDTH + WRAP_EXTRA + 3) & ~3) >> 2) - PRE1_WOFFSET_PREFETCH) << PRE1_WOFFSET10_SHIFT);
+    ccb.ccb_SourcePtr = (CelData *)planet.image;
+    ccb.ccb_PIXC = PIXC_UNCODED16;
+	
+    if ((lumbuf = LoadFile ("dog2.lum", &lumsize, MEMTYPE_ANY)))
+	lumccb = ParseCel (lumbuf, lumsize);
+    else
+	lumccb = 0;
+#endif
+	
+    OpenMathFolio ();
+    OpenAudioFolio ();
+    audio_rate = GetAudioRate () >> 16;
+
+    src_cy = HEIGHT;
+    dst_cx = dst_cy = 100 << 16;
+
+    x = (WIDTH / 2) / XBANDS;
+    i = XBANDS - 1;
+    do
+    {
+	src_w[i] = x;
+    } while (i--);
+
+#if 1
+    if (x * XBANDS < (WIDTH / 2))
+    {
+	x = (WIDTH / 2) - XBANDS * x;
+	i = 0;
+	do
+	{
+	    src_w[i++]++;
+	} while (--x);
+    }
+#endif
+
+    x = 0;
+    
+    pre_scaled = WIDTH > (HEIGHT << 1);
+    build_tables (src_cy, da);
+    
+    src_cy >>= 1;
+    
+Rotate:
+    start_time = GetAudioTime ();
+
+{
+    int32	iincr;
+    
+    iincr = 1;
+    for (src_y0 = 0, i = 0; src_y0 < HEIGHT;)
+    {
+#define src_h	ystep[i]
+	draw_band (chrccb, x, src_y0, src_cy, src_w, src_h, dst_cx, dst_cy, i);
+	src_y0 += src_h;
+	i += iincr;
+	if (src_h == 0)
+	{
+	    --i;
+	    iincr = -1;
+	    if (HEIGHT & 1)
+		--i;
+	}
+    }
+}
+    
+    if (lumccb)
+    {
+   	if (pre_scaled)
+	    blt_cel (lumccb,
+		    dst_cx - (lumccb->ccb_Width << 15),
+		    dst_cy - (lumccb->ccb_Height << 15),
+		    0, 0, 0);
+	else
+	    blt_cel (lumccb,
+		    dst_cx - (lumccb->ccb_Width << 15) * 14 / 22,
+		    dst_cy - (lumccb->ccb_Width << 15) * 14 / 22,
+		    0, 0, 0);
+    }
+
+    batch_cels (1);
+
+#if 1
+    {
+	int32	r;
+	
+	if ((r = ReadControlPad (~0)) & JOYSTART)
+	{
+	    while (ReadControlPad (~0));
+	    while (!ReadControlPad (~0));
+	    while (ReadControlPad (~0));
+	}
+	else if (r)
+	    goto Done;
+    }
+#endif
+
+    x += incr;
+    if (x < 0)
+	x = WIDTH - 1;
+    else if (x == WIDTH)
+	x = 0;
+
+//while (ReadControlPad (~0));
+//while (!ReadControlPad (~0));
+//exit (0);
+ticks += GetAudioTime () - start_time; ct++;
+
+//while (ReadControlPad (~0));
+//while (!(da = ReadControlPad (~0)));
+//if (da & JOYSTART) exit (0);
+    if (x)
+	goto Rotate;
+Done:    
+    UnloadFile (lumbuf);
+    UnloadFile (chrbuf);
+
+    CloseAudioFolio ();
+    
+    Uninit3DO ();
+    
+printf ("total: %ld times %ld ticks\n", ct, ticks);
+    
+    exit (0);
+}

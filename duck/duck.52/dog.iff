@@ -1,0 +1,1 @@
+#    armcc -zps0 -i {3DOIncludes} -d DEBUG=0 -o :Objects:{1}.c.o {1}.c    armcc -ff -fa -zps0 -za1 -i "{3DOIncludes}" -d DEBUG=1 -o :Objects:{1}.c.o {1}.c

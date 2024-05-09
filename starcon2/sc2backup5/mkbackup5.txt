@@ -1,0 +1,25 @@
+set BackupDisk 'SC2Backup5'
+set BackupDir {BackupDisk}':commstrings'
+
+if (`exists -d {BackupDisk}:` != {BackupDisk}:)
+    echo '3DO backup disk misnamed -- must be SC2Backup5'
+    exit 1
+end
+
+if (`exists -d {BackupDir}` != {BackupDir})
+    echo 'Creating a new folder -- commstrings'
+    newfolder {BackupDir}
+end
+
+sc2
+echo 'Backing up commstrings...'
+backup -a -c :convstrings:¦ -to {BackupDir} > commands
+execute commands
+echo 'Backup of commstrings complete.'
+
+echo 'Backing up mkbackups...'
+backup -a -c mkbackup¦ -to {BackupDisk} > commands
+execute commands
+echo 'Backup of mkbackups complete'
+
+echo 'SC2 backup #5 complete.'

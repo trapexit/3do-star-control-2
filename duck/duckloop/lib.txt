@@ -1,0 +1,2 @@
+armlib -o -c duckloop.lib :objects:¦.o
+	

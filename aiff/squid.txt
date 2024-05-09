@@ -1,0 +1,7 @@
+ armcc -zps1 -za1 -ff -i "{3doincludes}" -d DELAY_STUFF -g audiox.C
+ 
+armlink -aif -r -b 0x00 -workspace 0x4000 -d -o aiff "{3DOLibs}cstartup.o" audiox.o trackplayer.o aiff.o oscill.o graphics.o "{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}graphics.lib" "{3DOLibs}audio.lib" "{3DOLibs}music.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+modbin aiff -stack 8000 -debug
+duplicate -y aiff "{3DORemote}"
+beep
+

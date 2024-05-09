@@ -1,0 +1,310 @@
+/*
+	File:		DuckTest.c
+
+	Written by:	Dan Miller and Victor Yurkovsky
+
+	Copyright:	© 1993 by The Duck Corporation. All rights reserved.
+				This material constitutes confidential and proprietary
+				information of The Duck Corporation and shall not be used by
+				any person (or bozo) for any purpose except as expressly
+				authorized in writing by The Duck Corporation.
+
+
+	Duck Player released version 0.37 (REL 037)
+	
+	This is a test program to play Duck 3DO compressed Audio/Video files.
+	At present, four (4) data files must be found by the player.  These files
+	will reside in a directory called "DuckArt", which should be in the
+	root directory.  The files are:
+	
+	filename.duk
+	filename.hdr
+	filename.tbl
+	filename.frm
+	
+	where 'filename' specifies the compressed material (i.e., "doors.duk" etc.).
+	
+	In addition, a system file for the audio DSP must be found in the "DSPP"
+	folder in the root directory.  Which file you need is dictated by the audio
+	format.  The possible files are:
+	
+	adpcm22m2.dsp		22 khz mono
+	adpcm44m2.dsp		44 khz mono
+	adpcm22s2.dsp		22 khz stereo
+	adpcm44s2.dsp		44 khz stereo
+	
+	To compile, type:
+	c ducktest
+	in the MPW Worksheet window; then type:
+	link
+	to link with the .o files.  link will copy ducktest into your remote directory.
+	
+	To run, type ducktest in the terminal window of the debugger.  Make sure you don't
+	have a CD in the drive when you reset the 3DO, or it will look for datafiles there.
+	
+	This program has been hardcoded to play the 'doors' piece.  During play, the
+	joystick can be used to fast-forward, step-frame, and rewind.  Joystick button
+	C quits the player and returns to the calling program.  The rest should be self-
+	explanatory, but in case it is not, call Dan Miller at 685-4000 or 213-0349.
+	
+	*/
+
+
+#include "DuckTypes.h"
+#include "Portfolio.h"
+#include "Init3DO.h"				// setupScreen
+#include "mem.h"
+#include "DuckPlayer.h"
+#include "audio.h"
+
+#define BASE_DIR	"/cd-rom"
+#define BUTTONS ReadControlPad(0)
+
+/* This version of the Duck player uses screens 0 thru 3 of ScreenContext TheScreen.
+	If this is not convenient, it should be OK to copy relevant information into this
+	structure.  Here is the typedef for ScreenContext with info on how it is used by
+	the player:
+	
+	typedef struct ScreenContext_TAG
+	{
+	int32 	sc_nScreens;						// 4
+	int32 	sc_curScreen;						// initialized to zero
+	int32 	sc_nFrameBufferPages;				// you'll have to calculate this
+	int32 	sc_nFrameByteCount;					// unused
+	Item 	sc_Screens[MAXSCREENS];				// item numbers for Screens
+	Item	sc_BitmapItems[MAXSCREENS];			// item numbers for Bitmaps
+	Bitmap	*sc_Bitmaps[MAXSCREENS];			// pointers to Bitmaps
+	} ScreenContext;
+	
+*/
+
+extern ScreenContext TheScreen;
+
+#if DEBUG
+#define DIAGNOSTIC(s)		kprintf("Error: %s\n", s)
+#define DIAGSTRING(s,t)		kprintf("Fyi: %s %s\n", s ,t )
+#else
+#define DIAGNOSTIC(s)
+#define DIAGSTRING(s,t)
+#endif
+
+static Item	sgItem;
+static void	*bmbuf[4];
+static int32 bmsize;
+
+static bool
+locOpenGraphics(ScreenContext	* sc, int nScreens)
+{
+	long width, height;
+	Screen *screen;
+	Int32	i, w, h;
+	int32	bmpages;
+
+#define xxx	1	
+	TagArg taScreenTags[] =
+		{
+//		CSG_TAG_SPORTBITS, (void *)0,
+		CSG_TAG_BITMAPCOUNT, (void *)2,
+		CSG_TAG_SCREENCOUNT, (void *)2,
+		CSG_TAG_BITMAPBUF_ARRAY, (void *)0,
+		CSG_TAG_BITMAPWIDTH_ARRAY, (void *)0,
+		CSG_TAG_BITMAPHEIGHT_ARRAY, (void *)0,
+		CSG_TAG_DONE, (void *)0
+		};
+
+	sc->sc_nScreens = nScreens;
+	taScreenTags[1].ta_Arg = (void *)(sc->sc_nScreens);
+	sc->sc_nScreens = nScreens;
+	if (OpenGraphicsFolio())
+		{
+		DIAGNOSTIC("Cannot open graphics folio");
+		return FALSE;
+		}
+	
+	w = 320;
+	h = 240;
+	bmpages = (w*2*h
+		+ GrafBase->gf_VRAMPageSize-1) 
+		/ GrafBase->gf_VRAMPageSize;
+	bmsize = bmpages * GrafBase->gf_VRAMPageSize;
+	bmbuf[0] = AllocMem (bmpages * GrafBase->gf_VRAMPageSize,
+		MEMTYPE_VRAM | MEMTYPE_FILL | 0);
+	bmbuf[1] = AllocMem (bmpages * GrafBase->gf_VRAMPageSize,
+		MEMTYPE_VRAM | MEMTYPE_FILL | 0);
+	bmbuf[2] = AllocMem (bmpages * GrafBase->gf_VRAMPageSize,
+		MEMTYPE_VRAM | MEMTYPE_FILL | 0);
+	bmbuf[3] = AllocMem (bmpages * GrafBase->gf_VRAMPageSize,
+		MEMTYPE_VRAM | MEMTYPE_FILL | 0);
+	taScreenTags[1 + xxx].ta_Arg = (void *)bmbuf;
+	taScreenTags[2 + xxx].ta_Arg = (void *)&w;
+	taScreenTags[3 + xxx].ta_Arg = (void *)&h;
+	
+//	taScreenTags[0].ta_Arg = (void *)GETBANKBITS( GrafBase->gf_ZeroPage );
+
+	sgItem = CreateScreenGroup( &(sc->sc_Screens[0]), taScreenTags );
+	if ( sgItem < 0 )
+		{
+		DIAGNOSTIC("Cannot create screen group");
+		return FALSE;
+		}
+	AddScreenGroup( sgItem, NULL );
+
+	for ( i = 0; i < sc->sc_nScreens; i++ )
+		{
+		screen = (Screen *)LookupItem( sc->sc_Screens[i] );
+
+		if ( screen == NULL ) 
+			{
+		    DIAGNOSTIC("Cannot locate screens");
+		    return FALSE;
+			}
+		sc->sc_BitmapItems[i] = screen->scr_TempBitmap->bm.n_Item;
+		sc->sc_Bitmaps[i] = screen->scr_TempBitmap;
+		EnableHAVG(sc->sc_Screens[i]);
+		EnableVAVG(sc->sc_Screens[i]);
+		}
+
+	width = sc->sc_Bitmaps[0]->bm_Width;
+	height = sc->sc_Bitmaps[0]->bm_Height;
+
+	sc->sc_nFrameBufferPages = (width*2*height
+			+ GrafBase->gf_VRAMPageSize-1) 
+			/ GrafBase->gf_VRAMPageSize;
+	
+	sc->sc_nFrameByteCount = sc->sc_nFrameBufferPages * GrafBase->gf_VRAMPageSize;
+	sc->sc_curScreen = 0;
+
+	return TRUE;	
+}
+
+int	duck_done;
+
+int ducktest (ScreenContext *theScreen){
+	player plr;						/* this is the main player struct */
+	bool res;
+	u32	*testptr,i;
+	
+/* rumor has it this is not the 3DO-approved method of setting default
+	directories, so supply your own.
+	
+	Duck player expects files to exist in DuckArt, a directory in the
+	present path: */
+	
+	if (ChangeDirectory(BASE_DIR) < 0)
+		printf("Cannot change directory!");
+		
+/* we need a screenContext with four (4) screens: */
+
+printf ("ducktest 0\n");
+if (theScreen)
+    TheScreen = *theScreen;
+else
+	if (!locOpenGraphics(&TheScreen,4)
+		|| !OpenSPORT())
+		{
+			return FALSE;
+		}
+		
+/* number crunching please: */
+
+printf ("ducktest 1\n");
+	if (OpenMathFolio())
+	{
+		printf(("Math Folio could not be opened!\n"));
+		return(-1);
+	}
+		
+/* needs audio, of course. */
+
+printf ("ducktest 2\n");
+if (theScreen)
+    ;
+else
+    if (OpenAudioFolio())
+	{
+		printf(("Audio Folio could not be opened!\n"));
+		return(-1);
+	}
+
+/* we'll play this file a few times, to prove it works: */
+
+/*	for(i=0;i<3;i++) */ {
+  
+/*	playerOpen(player plr, char *name, u32 samprate)
+
+	player is our main player struct, see Duckplayer.h
+	
+	name is file to play sans extensions
+	
+	samprate:
+
+	Audio comes in 4 flavors.  WARNING -- Duck player loads a VERY LARGE INSTRUMENT
+	into the DSPP chip, which outputs directly to the DAC's.  You may have to dis-
+	connect and unload instruments before calling initAudio!
+
+	samprate	description			DSPP instrument file required
+	
+	22			22 khz mono			adpcm22m2.dsp
+	23			22 khz stereo		adpcm22s2.dsp
+	44			44 khz mono			adpcm44m2.dsp
+	45			44 khz stereo		adpcm44s2.dsp
+	
+	The doors clip is 44 khz mono.
+*/
+		
+		res = playerOpen(&plr,"doors",44);
+		if(res) {
+		
+/* play clip.  For now, Player demands frame count for proper play: */
+	
+			playerPlay(&plr,150);			// actually 1550 frames
+		
+/* Close player, releasing precious resources: */
+	
+			playerClose(&plr);
+	
+/*			testptr=(u32*)AllocMem(800000,MEMTYPE_DRAM);
+			printf("MEMORY ALLOCATION TEST: testptr=%p\n",testptr);
+			FreeMem(testptr,800000);	*/
+		
+/* exit politely: */
+	
+			printf("Thank you for using DUCK technology\n");
+		
+		} else {
+			printf("Player open failed\n");
+		}	
+	}
+
+	printf("GOODBYE\n");
+
+if (theScreen)
+    ChangeDirectory ("$boot");
+else
+{
+    CloseAudioFolio ();
+	RemoveScreenGroup (sgItem);
+	DeleteScreenGroup (sgItem);
+	FreeMem (bmbuf[0], bmsize);
+	FreeMem (bmbuf[1], bmsize);
+	FreeMem (bmbuf[2], bmsize);
+	FreeMem (bmbuf[3], bmsize);
+}
+printf ("ducktest 3\n");
+	return(0);
+
+}
+
+void
+xducktest ()
+{
+printf ("xducktest 0\n");
+    ducktest ((ScreenContext *)0);
+printf ("xducktest 1\n");
+	duck_done = 1;
+printf ("xducktest 2\n");
+    ScavengeMem ();
+printf ("xducktest 3\n");
+	while (1)
+	    Yield ();
+}

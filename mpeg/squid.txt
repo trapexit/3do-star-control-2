@@ -1,0 +1,6 @@
+armcc -zps1 -za1 -ff -i : -i "{3DOIncludes}" -d NO_LRAND48 -d NDEBUG -o VIDEO.o VIDEO.c
+armlink -aif -r -b 0x00 -workspace 0x4000 -d -o mpeg "{3DOLibs}cstartup.o" 24bit.o DECODERS.o JREVDCT.o MAIN.o MACRO.o MVECTOR.o PARSEBLK.o UTIL.o GDITH.o VIDEO.o ç
+"{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}graphics.lib" "{3DOLibs}audio.lib" "{3DOLibs}music.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+modbin mpeg -stack 8000 -debug
+duplicate -y mpeg "{3DORemote}"
+

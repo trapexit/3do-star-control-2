@@ -1,0 +1,57 @@
+set BackupDisk 'SC2Backup4'
+set BackupDir {BackupDisk}':converse'
+set COMMDIRS 
+	"':COMM:ARILOU:' 
+	':COMM:BLACKUR:' 
+	':COMM:CHMMR:' 
+	':COMM:COMANDR:' 
+	':COMM:DRUUGE:' 
+	':COMM:ILWRATH:' 
+	':COMM:MELNORM:' 
+	':COMM:MYCON:' 
+	':COMM:ORZ:' 
+	':COMM:PKUNK:' 
+	':COMM:REBEL:' 
+	':COMM:SHOFIXT:' 
+	':COMM:STARBAS:' 
+	':COMM:SLYHOME:' 
+	':COMM:SLYLAND:' 
+	':COMM:SPATHI:' 
+	':COMM:SPAHOME:' 
+	':COMM:SUPOX:' 
+	':COMM:SYREEN:' 
+	':COMM:TALKPET:' 
+	':COMM:THRADD:' 
+	':COMM:UMGAH:' 
+	':COMM:URQUAN:' 
+	':COMM:UTWIG:' 
+	':COMM:VUX:' 
+	':COMM:YEHAT:' 
+	':COMM:ZOQFOT:'"
+
+if (`exists -d {BackupDisk}:` != {BackupDisk}:)
+    echo '3DO backup disk misnamed -- must be SC2Backup4'
+    exit 1
+end
+
+if (`exists -d {BackupDir}` != {BackupDir})
+    echo 'Creating a new folder -- converse'
+    newfolder {BackupDir}
+end
+
+# FOR NEW DISKS...
+#newfolder {BackupDir}:comm
+#sc2
+#for TheDir in {COMMDIRS}
+#	echo 'Creating...' "{TheDir}"
+#	newfolder {BackupDir}{TheDir}
+#end
+
+sc2
+for TheDir in {COMMDIRS}
+	echo 'Backing up...' "{TheDir}"
+	delete -y {BackupDir}{TheDir}¦.res
+	backup -p -a -c -from {TheDir} -to {BackupDir}{TheDir} > commands
+	execute commands
+end
+echo 'SC2 backup #4 complete.'

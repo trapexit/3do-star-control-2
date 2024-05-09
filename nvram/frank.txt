@@ -1,0 +1,449 @@
+
+/***************************************************************************=
+**
+ *      File:           TextLib.h
+ *
+ *      Contains:       Header file for handling text rendered via 3DO fonts=
+..
+ *
+ *      Written by: Edgar Lee and Ian Lepore
+ *
+ *      Copyright:      =A9 1994 by The 3DO Company. All rights reserved.
+ *                              This material constitutes confidential andproprietary
+ *                              information of the 3DO Company and shallnot be used by
+ *                              any Person or for any purpose except asexpressly
+ *                              authorized in writing by the 3DO Company.
+ *
+ *      Change History (most recent first):
+ *
+ *        05/08/94      Ian             Added TagArg interface.  Added 
+DetachTextCelCCB().
+ *
+ *        03/05/94      Ian             Added tc_tabStops field to TextCel
+structure.
+ *                                              Added SetTextCelTabStops()
+and GetTextCelTabStops().
+ *
+ *        02/14/94      Edgar   Created format flags for text justification,
+ *                                              TC_FORMAT_LEFT_JUSTIFY,
+TC_FORMAT_RIGHT_JUSTIFY,
+ *                                              and
+TC_FORMAT_CENTER_JUSTIFY.  Created a mask
+ *                                              to go with the just. flags,
+TC_FORMAT_JUSTIFY_MASK.
+ *
+ *        02/11/94      Edgar   Added prototypes for SetTextCelFormatFlags()=
+ and
+ *                                              GetTextCelFormatFlags().
+Changed the comments
+ *                                              for the TC_FORMAT_WORDWRAP f=
+lag.
+ *
+ *        12/09/93      Ian             First release version.
+ *
+ *      Implementation notes:
+ *
+ ***************************************************************************=
+*/
+
+#pragma include_only_once
+
+#ifndef TEXTLIB_H
+#define TEXTLIB_H
+
+#include "FontLib.h"
+#include "graphics.h"
+#include "stdarg.h"
+
+/*--------------------------------------------------------------------------=
+--
+ * format flags that can be specified at TextCelCreate() time.
+ *--------------------------------------------------------------------------=
+*/
+
+#define TC_FORMAT_LEFT_JUSTIFY          0x00000000      // left justify
+text within cel
+#define TC_FORMAT_RIGHT_JUSTIFY         0x00000001      // right justify
+text within cel
+#define TC_FORMAT_CENTER_JUSTIFY        0x00000002      // center justify
+text within cel
+#define TC_FORMAT_FILL_JUSTIFY          0x00000003      // fill justify
+within cel (not yet supported)
+#define TC_FORMAT_WORDWRAP                      0x00000008      //
+auto-word-wrap text within cel
+
+#define TC_FORMAT_JUSTIFY_MASK          0x00000007      // mask off all
+flags, leaving just justification flags
+
+/*--------------------------------------------------------------------------=
+--
+ * TextCel structure.
+ *      Clients should use only the tc_CCB field; all other fields are priva=
+te
+ *      to the implementation and if you touch them Bad Things Will Happen.
+ *--------------------------------------------------------------------------=
+*/
+
+typedef struct TextCel {
+        CCB *                           tc_CCB;
+        FontDescriptor *        tc_fontDesc;
+        int32                           tc_fontAdjustSpacing;
+        int32                           tc_fontAdjustLeading;
+        uint32                          tc_formatFlags;
+        char *                          tc_formatBuffer;
+        uint32                          tc_formatBufferSize;
+        int32                           tc_XPosInCel;
+        int32                           tc_YPosInCel;
+        int32                           tc_leftMargin;
+        int32                           tc_topMargin;
+        int32                           tc_penNumber;
+        int32                           tc_celRowBytes;
+        uint32                          tc_bgColor;
+        uint32                          tc_fgColor[4];
+        uint16                          tc_tabStops[16];
+} TextCel;
+
+/*--------------------------------------------------------------------------=
+--
+ * TagArg interface.
+ *--------------------------------------------------------------------------=
+*/
+
+enum {
+        TCEL_TAG_FONT =3D 1,
+        TCEL_TAG_FORMAT_FLAGS,
+        TCEL_TAG_WIDTH,
+        TCEL_TAG_HEIGHT,
+        TCEL_TAG_SPACING_ADJUST,
+        TCEL_TAG_LEADING_ADJUST,
+        TCEL_TAG_BG_COLOR,
+        TCEL_TAG_FG_COLOR0,
+        TCEL_TAG_FG_COLOR1,
+        TCEL_TAG_FG_COLOR2,
+        TCEL_TAG_FG_COLOR3,
+        TCEL_TAG_FG_COLORS,
+        TCEL_TAG_CCB_X,
+        TCEL_TAG_CCB_Y,
+        TCEL_TAG_LEFT_MARGIN,
+        TCEL_TAG_TOP_MARGIN,
+        TCEL_TAG_PEN_NUMBER,
+        TCEL_TAG_FORMAT_BUFFER,
+        TCEL_TAG_FORMAT_BUFFER_SIZE,
+        TCEL_TAG_TAB_STOPS,
+        TCEL_TAG_REPLACE_EXISTING,
+        TCEL_TAG_UPDATE_TEXT_STRING,
+        TCEL_TAG_UPDATE_TEXT_ARGS
+};
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+TextCel *       taCreateTextCel(TagArg *args);
+Err                     taModifyTextCel(TextCel *tCel, TagArg *args);
+
+/*--------------------------------------------------------------------------=
+--
+ * prototypes for text-in-a-cel routines
+ *--------------------------------------------------------------------------=
+*/
+
+TextCel *       CreateTextCel(FontDescriptor *fDesc, uint32 formatFlags,
+int32 width, int32 height);
+TextCel *       CloneTextCel(TextCel *templateTextCel, Boolean clonePixels);
+void            DeleteTextCel(TextCel *tCel);
+CCB *           DetachTextCelCCB(TextCel *tCel);
+
+void            SetTextCelSpacingAdjust(TextCel *tCel, int32 adjustSpacing);
+void            SetTextCelLeadingAdjust(TextCel *tCel, int32 adjustLeading);
+void            SetTextCelColor(TextCel *tCel, int32 bgColor, int32 fgColor0=
+);
+void            SetTextCelColors(TextCel *tCel, int32 bgColor, int32
+fgColors[4]);
+void            SetTextCelCoords(TextCel *tCel, Coord ccbX, Coord ccbY);
+void            SetTextCelMargins(TextCel *tCel, int32 leftMargin, int32
+topMargin);
+void            SetTextCelPenNumber(TextCel *tCel, int32 penNumber);
+void            SetTextCelFormatFlags(TextCel *tCel, uint32 formatFlags);
+Err                     SetTextCelSize(TextCel *tCel, int32 width, int32
+height);
+Err                     SetTextCelFormatBuffer(TextCel *tCel, char *buffer,
+uint32 bufsize);
+void            SetTextCelTabStops(TextCel *tCel, uint16 tabStops[16], ...);
+
+void            GetTextCelSpacingAdjust(TextCel *tCel, int32 *adjustSpacing)=
+;
+void            GetTextCelLeadingAdjust(TextCel *tCel, int32 *adjustLeading)=
+;
+void            GetTextCelColor(TextCel *tCel, int32 *bgColor, int32 *fgColo=
+r0);
+void            GetTextCelColors(TextCel *tCel, int32 *bgColor, int32
+fgColors[4]);
+void            GetTextCelCoords(TextCel *tCel, Coord *ccbX, Coord *ccbY);
+void            GetTextCelMargins(TextCel *tCel, int32 *leftMargin, int32
+*topMargin);
+void            GetTextCelPenNumber(TextCel *tCel, int32 *penNumber);
+uint32          GetTextCelFormatFlags(TextCel *tCel, uint32 *formatFlags);
+void            GetTextCelSize(TextCel *tCel, int32 *width, int32 *height);
+void            GetTextCelFormatBuffer(TextCel *tCel, char **buffer, uint32
+*bufsize);
+void            GetTextCelTabStops(TextCel *tCel, uint16 tabStops[16]);
+
+void            EraseTextInCel(TextCel *tCel);
+
+Err                     vUpdateTextInCel(TextCel *tCel, Boolean
+replaceExisting, char *fmtString, va_list fmtArgs);
+Err                      UpdateTextInCel(TextCel *tCel, Boolean
+replaceExisting, char *fmtString, ...);
+
+char *          vGetTextExtent(TextCel *tCel, int32 *pWidth, int32
+*pHeight, char *fmtString, va_list fmtArgs);
+char *           GetTextExtent(TextCel *tCel, int32 *pWidth, int32
+*pHeight, char *fmtString, ...);
+
+/*--------------------------------------------------------------------------=
+--
+ * prototypes for render-direct-to-screen routines
+ *--------------------------------------------------------------------------=
+*/
+
+void    DrawTextString(FontDescriptor *fDesc, GrafCon *gcon, Item
+bitmapItem, char *text, ...);
+void    DrawTextChar(FontDescriptor *fDesc, GrafCon *gcon, Item bitmapItem,
+uint32 character);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  // TEXTLIB_H
+
+
+
+/***************************************************************************=
+**
+ *      File:           FontLib.h
+ *
+ *      Contains:       Header file for low-level handling of 3DO font files
+ *
+ *      Written by:  Edgar Lee and Ian Lepore
+ *
+ *      Copyright:      =A9 1993 by The 3DO Company All rights reserved
+ *                              This material constitutes confidential and
+proprietary
+ *                              information of the 3DO Company and shall
+not be used by
+ *                              any Person or for any purpose except as
+expressly
+ *                              authorized in writing by the 3DO Company
+ *
+ *      Change History (most recent first):
+ *
+ *        05/07/94      Ian             Added stuff related to two-image
+(shadowed and
+ *                                              outlined) fonts.
+ *
+ *        03/18/94      Edgar   Added typeface constants for the font.
+ *
+ *        12/09/93      Ian             First release version
+ *
+ *      Implementation notes:
+ *
+ *      This header file is used with both ARMCC and MPWC; the MPWC use is
+ *      for the 3DOFontWriter application  If you make changes or additions
+ *      to this header file, you must recompile 3DOFontWriter as well as any
+ *      3DO-side libraries and applications using fonts
+ ***************************************************************************=
+*/
+
+#ifndef FONTLIB_H
+#define FONTLIB_H
+
+#ifdef __CC_NORCROFT                            // MPWC has its own types.h
+that conflicts with
+  #include "types.h"                            // the 3DO types.h, so on
+the 3DO side we use the
+#else                                                           // header
+file, and on the MPW side, we just supply
+  typedef long                          int32;  // a few crucial typedefs
+right here
+  typedef unsigned long         uint32;
+  typedef short                         int16;
+  typedef unsigned short        uint16;
+#endif
+
+/*--------------------------------------------------------------------------=
+--
+ * Font internal datatypes
+ *      Client code should not count on these things remaining as they are n=
+ow.
+ *--------------------------------------------------------------------------=
+*/
+
+#ifndef CHAR4LITERAL
+  #define CHAR4LITERAL(a,b,c,d) ((unsigned long) (a<<24)|(b<<16)|(c<<8)|d)
+#endif
+
+#define CHUNK_FONT                      CHAR4LITERAL('F','O','N','T')
+
+typedef struct FontHeader {
+        int32                   chunk_ID;
+// Standard 3DO file header fields;
+        int32                   chunk_size;                             //
+font file is one huge chunk
+        uint32                  fh_fontType;                            //
+=46ont type
+        uint32                  fh_fontFlags;                           //
+=46ont flags
+        uint32                  fh_charHeight;                          //
+Height of character (ascent+descent)
+        uint32                  fh_charWidth;                           //
+Max width of character (pixels)
+        uint32                  fh_bitsPerPixel;                        //
+Pixel depth of each character, as stored in file
+        uint32                  fh_firstChar;                           //
+=46irst char defined in character set
+        uint32                  fh_lastChar;                            //
+Last char defined in character set
+        uint32                  fh_charExtra;                           //
+Spacing between characters
+        uint32                  fh_ascent;
+// Distance from baseline to ascentline
+        uint32                  fh_descent;
+// Distance from baseline to descentline
+        uint32                  fh_leading;
+// Distance from descent line to next ascent line
+        uint32                  fh_charInfoOffset;                      //
+Offset from file beginning to offset/width table
+        uint32                  fh_charInfoSize;                        //
+Size of offset/width table in bytes
+        uint32                  fh_charDataOffset;                      //
+Offset from file beginning to char data
+        uint32                  fh_charDataSize;                        //
+Size of all character data in bytes
+        uint32                  fh_reserved[4];                         //
+Typical reserved-for-future-expansion
+} FontHeader;
+
+typedef struct FontCharInfo {
+        unsigned int    fci_charOffset : 22;            // Offset from
+start of char data to this char
+        unsigned int    fci_unused     :  2;            // two available bit=
+s
+        unsigned int    fci_charWidth  :  8;            // Width (in
+pixels) of data for this char
+} FontCharInfo;
+
+/*--------------------------------------------------------------------------=
+--
+ * FontDescriptor
+ *      Client code should pull any needed info about a font from this
+structure.
+ *      the fields down thru fd_reserved are g'teed to remain the same forev=
+er;
+ *      fields from fd_fontHeader down may change in the future.
+ *      Client code should never modify any values in this structure.
+ *--------------------------------------------------------------------------=
+*/
+
+#define FFLAG_DYNLOADED         0x01000000                      // File
+loaded via LoadFont (not via ParseFont)
+#define FFLAG_MONOSPACED        0x00000001                      // Font is
+monospaced (not proportional)
+#define FFLAG_ITALIC            0x00000002                      // Font
+typefaces
+#define FFLAG_BOLD                      0x00000004                      //
+=46ont typefaces
+#define FFLAG_OUTLINED          0x00000008                      // Font
+typefaces
+#define FFLAG_SHADOWED          0x00000010                      // Font
+typefaces
+#define FFLAG_UNDERLINED        0x00000020                      // Font
+typefaces
+#define FFLAG_TWOCOLOR          0x00000100                      // Font
+contains two-color characters (5bpp)
+
+typedef struct FontDescriptor  {
+        uint32                  fd_fontFlags;                           //
+=46lags describing the font
+        uint32                  fd_charHeight;                          //
+Height of character (ascent+descent)
+        uint32                  fd_charWidth;                           //
+Max width of character (pixels)
+        uint32                  fd_bitsPerPixel;                        //
+Pixel depth of each character, as stored in file
+        uint32                  fd_firstChar;                           //
+=46irst char defined in character set
+        uint32                  fd_lastChar;                            //
+Last char defined in character set
+        uint32                  fd_charExtra;                           //
+Spacing between characters
+        uint32                  fd_ascent;
+// Distance from baseline to ascentline
+        uint32                  fd_descent;
+// Distance from baseline to descentline
+        uint32                  fd_leading;
+// Distance from descent line to next ascent line
+        uint32                  fd_reserved[4];                         //
+Everything from here down private to internals and subject to change
+        void *                  fd_fontHeader;                          //
+=46ont header information
+        void *                  fd_charInfo;                            //
+Per-character data table
+        void *                  fd_charData;                            //
+The character data
+} FontDescriptor;
+
+/*--------------------------------------------------------------------------=
+--
+ * prototypes...
+ *--------------------------------------------------------------------------=
+*/
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*--------------------------------------------------------------------------=
+--
+ * FontBlit API
+ *      These things are used to blit character pixels from the font data
+ *      area into a cel buffer.
+ *--------------------------------------------------------------------------=
+*/
+
+int32   GetFontCharInfo(FontDescriptor *fDesc, int32 character, void
+**blitInfo);
+int32   BlitFontChar(FontDescriptor *fDesc, uint32 theChar, void *blitInfo,
+                                        void *dstBuf, int32 dstX, int32 dstY=
+,
+                                        int32 dstBPR, int32 dstColorIndex,
+int32 dstBPP);
+
+/*--------------------------------------------------------------------------=
+--
+ * Font file API
+ *--------------------------------------------------------------------------=
+*/
+
+=46ontDescriptor *        ParseFont(void *fontImage);
+=46ontDescriptor *        LoadFont(char *fontFileName, uint32 memTypeBits);
+void                            UnloadFont(FontDescriptor * fDesc);
+
+int32   GetFontCharWidth(FontDescriptor *fDesc, int32 character);
+int32   GetFontCharWidest(FontDescriptor *fDesc, char *string);
+int32   GetFontStringWidth(FontDescriptor *fDesc, char *string);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  // FONTLIB_H
+
+||||||||||  Francis Stanbach  |||||||||||||||||||||||||||||||||||||||
+||||||||||  stanbach@3do.com  |||||||||||||||||||||||||||||||||||||||
+||||||||||  The 3DO Company   |||||||||||||||||||||||||||||||||||!|||
+||||||||||  MILK RUN          |||||||||||||||||||||||||||||||||||||||
+
+
+

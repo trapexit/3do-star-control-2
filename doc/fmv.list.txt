@@ -1,0 +1,31 @@
+h1	-- intro
+h2	-- segue00
+h3	-- segue10
+h4	-- segue01
+h5	-- segue11
+h6	-- segue02
+h7	-- segue12
+h8	-- segue03
+h9	-- segue13
+h10	-- segue04
+h11	-- failtax
+h12	-- failvill
+h13	-- faildead
+h14	-- more_tax
+h15	-- lessvill
+h16	-- no_tport
+h17	-- morehord
+h18	-- money
+h19	-- maxtport
+h20	-- lesshord
+h21	-- morevill
+h22	-- meteor
+h23	-- lesscrop
+h24	-- morecrop
+h25	-- noarcher
+h26	-- mercfees
+h27	-- flood
+h28	-- no_tax
+h29	-- victory
+h30	-- pirate0 (adopt-a-hordling)
+h31	-- pirate1 (peeled-eyes...mmm)

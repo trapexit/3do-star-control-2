@@ -1,0 +1,64 @@
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OpenGraphics.c.o OpenGraphics.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OpenMacLink.c.o OpenMacLink.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OpenSPORT.c.o OpenSPORT.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OpenAudio.c.o OpenAudio.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:ShutDown.c.o ShutDown.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:GetFileSize.c.o GetFileSize.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:ReadFile.c.o ReadFile.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FindChunk.c.o FindChunk.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:GetChunk.c.o GetChunk.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:setCCBPLUTPtr.c.o setCCBPLUTPtr.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:setCCBDataPtr.c.o setCCBDataPtr.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LoadCel.c.o LoadCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OldLoadCel.c.o OldLoadCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FreeAnimFrames.c.o FreeAnimFrames.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LoadAnim.c.o LoadAnim.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OldLoadAnim.c.o OldLoadAnim.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LoadImage.c.o LoadImage.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LoadSoundFX.c.o LoadSoundFX.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LoadSoundEffect.c.o LoadSoundEffect.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:BlockFile.c.o BlockFile.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:CenterCelOnScreen.c.o CenterCelOnScreen.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:CenterRectf16.c.o CenterRectf16.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:DrawAnimCel.c.o DrawAnimCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:DrawImage.c.o DrawImage.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FadeFromBlack.c.o FadeFromBlack.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FadeInCel.c.o FadeInCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FadeOutCel.c.o FadeOutCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FadeToBlack.c.o FadeToBlack.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FrameBufferToCel.c.o FrameBufferToCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FreeBuffer.c.o FreeBuffer.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:GetAnimCel.c.o GetAnimCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LinkCel.c.o LinkCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:LoadFile.c.o LoadFile.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:MakeNewCel.c.o MakeNewCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:MakeNewDupCCB.c.o MakeNewDupCCB.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:MapP2Cel.c.o MapP2Cel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:MoveCel.c.o MoveCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:OffsetCel.c.o OffsetCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:ParseAnim.c.o ParseAnim.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:ParseCel.c.o ParseCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:PreMoveCel.c.o PreMoveCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:ReadControlPad.c.o ReadControlPad.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetCelScale.c.o SetCelScale.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetChannel.c.o SetChannel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetFadeInCel.c.o SetFadeInCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetFadeOutCel.c.o SetFadeOutCel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetMixer.c.o SetMixer.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetMixerChannel.c.o SetMixerChannel.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetQuad.c.o SetQuad.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:SetRectf16.c.o SetRectf16.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:UMemory.c.o UMemory.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:UMemoryDebug.c.o UMemoryDebug.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:WriteMacFile.c.o WriteMacFile.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:taTextLib.c.o taTextLib.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:TextLib.c.o TextLib.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:FontLib.c.o FontLib.c
+armasm -bi -i "{3DOIncludes}" -o :Objects:FontBlit3To8_.s.o FontBlit3To8_.s
+armasm -bi -i "{3DOIncludes}" -o :Objects:FontBlit5To8_.s.o FontBlit5To8_.s
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:DeleteCelMagic.c.o DeleteCelMagic.c
+armcc  -zps0 -za1 -ff -i "{3DOIncludes}" -dDEBUG=0 -o :Objects:ChainCels.c.o ChainCels.c
+armlib	-c -o		ç
+			Lib3DO.lib		ç
+			":Objects:OpenGraphics.c.o" ":Objects:OpenMacLink.c.o" ":Objects:OpenSPORT.c.o" ":Objects:OpenAudio.c.o" ":Objects:ShutDown.c.o" ":Objects:GetFileSize.c.o" ":Objects:ReadFile.c.o" ":Objects:FindChunk.c.o" ":Objects:GetChunk.c.o" ":Objects:setCCBPLUTPtr.c.o" ":Objects:setCCBDataPtr.c.o" ":Objects:LoadCel.c.o" ":Objects:OldLoadCel.c.o" ":Objects:FreeAnimFrames.c.o" ":Objects:LoadAnim.c.o" ":Objects:OldLoadAnim.c.o" ":Objects:LoadImage.c.o" ":Objects:LoadSoundFX.c.o" ":Objects:LoadSoundEffect.c.o" ":Objects:BlockFile.c.o" ":Objects:CenterCelOnScreen.c.o" ":Objects:CenterRectf16.c.o" ":Objects:DrawAnimCel.c.o" ":Objects:DrawImage.c.o" ":Objects:FadeFromBlack.c.o" ":Objects:FadeInCel.c.o" ":Objects:FadeOutCel.c.o" ":Objects:FadeToBlack.c.o" ":Objects:FrameBufferToCel.c.o" ":Objects:FreeBuffer.c.o" ":Objects:GetAnimCel.c.o" ":Objects:LinkCel.c.o" ":Objects:LoadFile.c.o" ":Objects:MakeNewCel.c.o" ":Objects:MakeNewDupCCB.c.o" ":Objects:MapP2Cel.c.o" ":Objects:MoveCel.c.o" ":Objects:OffsetCel.c.o" ":Objects:ParseAnim.c.o" ":Objects:ParseCel.c.o" ":Objects:PreMoveCel.c.o" ":Objects:ReadControlPad.c.o" ":Objects:SetCelScale.c.o" ":Objects:SetChannel.c.o" ":Objects:SetFadeInCel.c.o" ":Objects:SetFadeOutCel.c.o" ":Objects:SetMixer.c.o" ":Objects:SetMixerChannel.c.o" ":Objects:SetQuad.c.o" ":Objects:SetRectf16.c.o" ":Objects:UMemory.c.o" ":Objects:UMemoryDebug.c.o" ":Objects:WriteMacFile.c.o"  ":Objects:taTextLib.c.o" ":Objects:TextLib.c.o" ":Objects:FontLib.c.o" ":Objects:FontBlit3To8_.s.o" ":Objects:FontBlit5To8_.s.o" ":Objects:DeleteCelMagic.c.o" ":Objects:ChainCels.c.o" 
+Duplicate -y Lib3DO.lib {3DOLibs}Lib3DO.lib

@@ -1,0 +1,48 @@
+set BackupDisk '3DOSrc'
+
+if (`exists -d {BackupDisk}:` != {BackupDisk}:)
+    echo '3DO backup disk misnamed -- must be 3DOSrc'
+    exit 1
+end
+
+libs
+set BackupDir {BackupDisk}':libs'
+if (`exists -d {BackupDir}` == {BackupDir})
+    delete -y {BackupDir}
+end
+newfolder {BackupDir}
+
+for LibDir in :¦
+    if (`exists -d {LibDir}` == {LibDir})
+	if (`exists -d {BackupDir}{LibDir}` == {BackupDir}{LibDir})
+	    delete -y {BackupDir}{LibDir}
+	end
+	newfolder {BackupDir}{LibDir}
+	
+	set ThreeDODir {LibDir}:3DO
+	if (`exists -d {ThreeDODir}` == {ThreeDODir})
+	    echo 'Backing up' {ThreeDODir}'...'
+	    newfolder {BackupDir}{ThreeDODir}
+	    backup -a -c -y -from {ThreeDODir} -to {BackupDir}{ThreeDODir} > commands
+	    execute commands
+	    echo 'Backup of' {ThreeDODir} 'complete'
+	end
+	
+	echo 'Backing up' {LibDir}:lib'.make...'
+	backup -a -c -y {LibDir}:lib.make -to {BackupDir}{LibDir} > commands
+	execute commands
+	echo 'Backup of' {LibDir}:lib'.make complete'
+    end
+end
+
+echo 'Backing up barf...'
+backup -a -c -y barf.make barf.c makebarf -to {BackupDir} > commands
+execute commands
+echo 'Backup of barf complete'
+
+echo 'Backing up slideshow...'
+backup -a -c -y slideshow.make slideshow.c -to {BackupDir} > commands
+execute commands
+echo 'Backup of slideshow complete'
+
+echo '3DO backup complete'

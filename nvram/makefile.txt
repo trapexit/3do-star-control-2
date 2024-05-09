@@ -1,0 +1,91 @@
+#
+#	File:		Makefile
+#
+#	Contains:	Make file for building ROM Examples
+#
+#	Written by:	Francis Stanbach
+#
+#	Copyright:	© 1993 by The 3DO Company. All rights reserved.
+#				This material constitutes confidential and proprietary
+#				information of the 3DO Company and shall not be used by
+#				any Person or for any purpose except as expressly
+#				authorized in writing by the 3DO Company.
+#
+#	Change History (most recent first):
+#
+#		 <1>	 1/7/94		FJS		first stolen
+#
+#	To Do:
+#
+
+#####################################
+#		Symbol definitions
+#####################################
+DebugFlag		=	1
+OS1p2			=	0
+ObjectDir		=	:Objects:
+CC				=	armcc
+ASM				=	armasm
+LINK			=	armlink
+LIBRARIAN		=	armlib
+
+
+#####################################
+#	Default compiler options
+#####################################
+CDebugOptions	= -g
+COptions		= {CDebugOptions} -zps0 -za1 -i "{3DOIncludes}" -d DEBUG={DebugFlag} -d OS1p2={OS1p2}
+
+SOptions		= -bi -g -i "{3DOIncludes}"
+
+LDebugOptions	= -d 
+LOptions		= -aif -r -b 0x00 -workspace 4096 {LDebugOptions}
+
+LibOptions		= -o
+
+#####################################
+#		Object files
+#####################################
+LIBS			=	"StorageManager.lib"		ç
+					"{3DOLibs}Lib3DO.lib"		ç
+					"{3DOLibs}operamath.lib"	ç
+					"{3DOLibs}graphics.lib"		ç
+					"{3DOLibs}audio.lib"		ç
+					"{3DOLibs}filesystem.lib"	ç
+					"{3DOLibs}input.lib"		ç
+					"{3DOLibs}clib.lib"			ç
+					"{3DOLibs}swi.lib"
+
+# NOTE: Add object files here...
+
+EndlessOBJECTS			=	{ObjectDir}Endless.c.o
+
+#####################################
+#	Default build rules
+#####################################
+
+{ObjectDir}		É	: 
+
+.c.o			É	.c
+	{CC} {COptions} -o {TargDir}{Default}.c.o {DepDir}{Default}.c
+
+.s.o			É	.s
+	{ASM} {SOptions} -o {TargDir}{Default}.s.o {DepDir}{Default}.s
+
+
+#####################################
+#	Target build rules
+#####################################
+
+Endless	É	Makefile {LIBS} {EndlessOBJECTS}
+	{LINK}	{LOptions}					ç
+			-o {targ}					ç
+			"{3DOLibs}cstartup.o"		ç
+			{EndlessOBJECTS}			ç
+			{LIBS}
+	SetFile {targ} -c 'EaDJ' -t 'PROJ'
+	modbin {targ} -debug -stack 4096
+	stripaif {targ} -o {targ} -s {targ}.sym
+	duplicate -y {targ} "{3DORemote}Crystal:"{targ} 
+	duplicate -y {targ}.sym "{3DORemote}Crystal:"{targ}.sym
+

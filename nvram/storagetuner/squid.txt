@@ -1,0 +1,39 @@
+Set DebugFlag 0
+armcc {CDebugOptions} -zps0 -za1 -i "{3DOIncludes}" -i :lib: -i :tuner: -d DEBUG={DebugFlag} -o :Objects:st.c.o :Tuner:st.c
+armcc {CDebugOptions} -zps0 -za1 -i "{3DOIncludes}" -i :lib: -i :tuner: -d DEBUG={DebugFlag} -o :Objects:stlists.c.o :Tuner:stlists.c
+armcc {CDebugOptions} -zps0 -za1 -i "{3DOIncludes}" -i :lib: -i :tuner: -d DEBUG={DebugFlag} -o :Objects:stmem.c.o :Tuner:stmem.c
+armlink	-aif -r -b 0x00 -workspace 4096						ç
+		-o StorageTuner						ç
+		"{3DOLibs}"subroutinestartup.o	ç
+		":Objects:st.c.o" ":Objects:stlists.c.o" ":Objects:stmem.c.o"						ç
+		"{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}graphics.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+SetFile StorageTuner -c 'EaDJ' -t 'PROJ'
+modbin StorageTuner -stack 4096
+stripaif "StorageTuner" -o Dev:Null -s "StorageTuner".sym
+duplicate -y "StorageTuner" "{3DORemote}"StorageTuner:
+set CDebugOptions -g
+set DebugFlag 1
+armlink	-d -aif -r -b 0x00 -workspace 4096		ç
+		-o StorageTunerDebug						ç
+		"{3DOLibs}"subroutinestartup.o	ç
+		":ObjectsDebug:st.c.o" ":ObjectsDebug:stlists.c.o" ":ObjectsDebug:stmem.c.o"					ç
+		"{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}graphics.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+SetFile StorageTunerDebug -c 'EaDJ' -t 'PROJ'
+modbin StorageTunerDebug -debug -stack 4096
+stripaif "StorageTunerDebug" -o "StorageTunerDebug" -s "StorageTunerDebug".sym
+duplicate -y "StorageTunerDebug" "{3DORemote}"StorageTuner:
+duplicate -y "StorageTunerDebug".sym "{3DORemote}"StorageTuner:
+armcc {CDebugOptions} -zps0 -za1 -i "{3DOIncludes}" -i :lib: -i :tuner: -d DEBUG={DebugFlag} -o :Objects:Storagetunerexample.c.o :Examples:Storagetunerexample.c
+armcc {CDebugOptions} -zps0 -za1 -i "{3DOIncludes}" -i :lib: -i :tuner: -d DEBUG={DebugFlag} -o :Objects:storagetuner.c.o :lib:storagetuner.c
+armlib	-c -o 	ç
+			StorageTuner.lib				ç
+			:Objects:storagetuner.c.o
+armlink	-aif -r -b 0x00 -workspace 4096						ç
+		-o StorageTunerExample						ç
+		"{3DOLibs}"subroutinestartup.o				ç
+		:Objects:storagetunerexample.c.o	ç
+		StorageTuner.lib				ç
+		"{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}graphics.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+SetFile StorageTunerExample -c 'EaDJ' -t 'PROJ'
+modbin StorageTunerExample -stack 4096
+duplicate -y "StorageTunerExample" "{3DORemote}"StorageTuner:

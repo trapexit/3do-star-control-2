@@ -1,0 +1,25 @@
+    armlink -aif -r -b 0x00 -workspace 0x4000 -d -o {1} ½
+#    armlink -aif -r -b 0x00 -workspace 0x4000 -o {1} ½
+		{3DOLibs}cstartup.o ½
+		":Objects:{1}.c.o" ½
+		":Objects:DuckMotion.c.o" ½
+		":Objects:dx.s.o" ½
+		":Objects:Async.c.o" ½
+		":Objects:DuckPlayer.c.o" ½
+		":Objects:AudioADPCM.c.o" ½
+		":Objects:ourVDL.c.o" ½
+#		":Objects:colorecho_tools.c.o" ½
+":Objects:DuckDebug.c.o" ½
+		{3DOLibs}Lib3DO.lib ½
+		{3DOLibs}operamath.lib ½
+		{3DOLibs}filesystem.lib ½
+		{3DOLibs}graphics.lib ½
+		{3DOLibs}audio.lib ½
+		{3DOLibs}music.lib ½
+		{3DOLibs}input.lib ½
+		{3DOLibs}clib.lib ½
+		{3DOLibs}swi.lib
+	SetFile {1} -c 'EaDJ' -t 'PROJ'
+	modbin "{1}" -stack 5000 -debug
+	stripaif "{1}" -o "{1}"
+	move -y {1} {3DORemote}{1}

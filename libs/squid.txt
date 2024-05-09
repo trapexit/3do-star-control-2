@@ -1,0 +1,6 @@
+armcc -zps1 -za1 -ff -g -i "{HardDisk}:src:libs","{3DOIncludes}" -d __WATCOMC__=1 -d _VW=292 -d _VH=216 tmem.C
+ 
+armlink -aif -r -b 0x00 -workspace 0x4000 -d -o tmem "{3DOLibs}cstartup.o" tmem.o "{3DOLibs}StorageTuner.lib" "{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}graphics.lib" "{3DOLibs}audio.lib" "{3DOLibs}music.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+modbin tmem -stack 8000 -debug
+duplicate -y tmem "{3DORemote}"
+

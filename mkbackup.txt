@@ -1,0 +1,41 @@
+set BackupDisk '3DOSrc'
+
+if (`exists -d {BackupDisk}:` != {BackupDisk}:)
+    echo '3DO backup disk misnamed -- must be 3DOSrc'
+    exit 1
+end
+
+libs
+set BackupDir {BackupDisk}':libs'
+if (`exists -d {BackupDir}` == {BackupDir})
+    delete -y {BackupDir}
+end
+newfolder {BackupDir}
+
+echo 'Backing up libs...'
+cp ¦.[chs] {BackupDir}
+cp ¦make¦ {BackupDir}
+
+for LibDir in :¦
+    if (`exists -d {LibDir}` == {LibDir})
+	if (`exists -d {BackupDir}{LibDir}` == {BackupDir}{LibDir})
+	    delete -y {BackupDir}{LibDir}
+	end
+	newfolder {BackupDir}{LibDir}
+	
+	echo 'Backing up' {LibDir}'...'
+	cp {LibDir}:¦.[chs] {BackupDir}{LibDir}
+	cp {LibDir}:lib.make {BackupDir}{LibDir}
+	
+	set ThreeDODir {LibDir}:3DO
+	if (`exists -d {ThreeDODir}` == {ThreeDODir})
+	    echo 'Backing up' {ThreeDODir}'...'
+	    newfolder {BackupDir}{ThreeDODir}
+	    cp {ThreeDODir}:¦.[chs] {BackupDir}{ThreeDODir}
+	end
+	
+	echo 'Backup of' {LibDir} 'complete'
+    end
+end
+
+echo '3DO backup complete'

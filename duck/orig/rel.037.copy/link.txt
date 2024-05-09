@@ -1,0 +1,24 @@
+    armlink -aif -r -b 0x00 -workspace 0x4000 -d -o DuckTest ç
+		{3DOLibs}cstartup.o ç
+		":Objects:DuckTest.c.o" ç
+		":Objects:DuckMotion.c.o" ç
+		":Objects:dx.s.o" ç
+		":Objects:Async.c.o" ç
+		":Objects:DuckPlayer.c.o" ç
+		":Objects:AudioADPCM.c.o" ç
+		":Objects:ourVDL.c.o" ç
+":Objects:DuckDebug.c.o" ç
+		{3DOLibs}Lib3DO.lib ç
+		{3DOLibs}operamath.lib ç
+		{3DOLibs}filesystem.lib ç
+		{3DOLibs}graphics.lib ç
+		{3DOLibs}audio.lib ç
+		{3DOLibs}music.lib ç
+		{3DOLibs}input.lib ç
+		{3DOLibs}clib.lib ç
+		{3DOLibs}swi.lib
+	SetFile DuckTest -c 'EaDJ' -t 'PROJ'
+	modbin "DuckTest" -stack 5000 -debug
+	stripaif "DuckTest" -o "DuckTest"
+	move -y DuckTest {3DORemote}
+	

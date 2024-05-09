@@ -1,0 +1,27 @@
+    armlink -aif -r -b 0x00 -workspace 0x4000 -d -o {1} ç
+#    armlink -aif -r -b 0x00 -workspace 0x4000 -o {1} ç
+		"{3DOLibs}cstartup.o" ç
+		":Objects:{1}.c.o" ç
+		":Objects:DuckMotion.c.o" ç
+		":Objects:dx.s.o" ç
+		":Objects:dxg.s.o" ç
+		":Objects:Async.c.o" ç
+		":Objects:DuckPlayer.c.o" ç
+		":Objects:AudioADPCM.c.o" ç
+		":Objects:ourVDL.c.o" ç
+#		":Objects:colorecho_tools.c.o" ç
+":Objects:DuckDebug.c.o" ç
+		"{3DOLibs}Lib3DO.lib" ç
+		"{3DOLibs}operamath.lib" ç
+		"{3DOLibs}filesystem.lib" ç
+		"{3DOLibs}graphics.lib" ç
+		"{3DOLibs}audio.lib" ç
+		"{3DOLibs}music.lib" ç
+		"{3DOLibs}input.lib" ç
+		"{3DOLibs}clib.lib" ç
+		"{3DOLibs}swi.lib"
+	SetFile {1} -c 'EaDJ' -t 'PROJ'
+	modbin "{1}" -stack 5000 -debug
+	stripaif "{1}" -o "{1}"
+	duplicate -y {1} "{3DORemote}"{1}
+	duplicate -y {1} 'mr. gristle:3do:3do_os:1p3:remote:'{1}

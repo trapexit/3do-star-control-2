@@ -1,0 +1,10 @@
+ armcc -zps1 -za1 -ff -i "{3doincludes}","::duck.52","::src.new" sdp.C -o sdp.lib.o
+ 
+armlib -o -c duckloop.lib vid_snd.lib.o sdplayer.lib.o sdp.lib.o :objects:duckdebug.c.o :objects:dx.s.o :objects:dxg.s.o :objects:ourvdl.c.o :objects:sdmotion.c.o
+ armcc -zps1 -za1 -ff -i "{3doincludes}","::duck.52","::src.new" -D STANDALONE -g sdp.c
+ 
+armlink -aif -r -b 0x00 -workspace 0x4000 -o duckloop -d "{3DOLibs}cstartup.o" vid_snd.o sdplayer.o sdp.o :objects:duckdebug.c.o :objects:dx.s.o :objects:dxg.s.o :objects:ourvdl.c.o :objects:sdmotion.c.o "{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}graphics.lib" "{3DOLibs}audio.lib" "{3DOLibs}music.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+modbin duckloop -stack 8000 -debug
+duplicate -y duckloop "{3DORemote}"
+beep
+

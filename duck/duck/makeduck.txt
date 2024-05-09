@@ -1,0 +1,3 @@
+make -f duck.make > squid.duck
+squid.duck
+rm squid.duck

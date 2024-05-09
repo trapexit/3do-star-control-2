@@ -1,0 +1,6 @@
+Bombs do full damage to juggers?
+Compact NVRAM for save games
+Fix different "blacks" in shop
+Reclaim water in desert
+Invisible hordling???
+New duck code?

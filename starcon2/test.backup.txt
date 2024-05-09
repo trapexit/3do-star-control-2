@@ -1,0 +1,34 @@
+set SHIPDIRS ç
+	"':ANDROSYN:' ç
+	':ARILOU:' ç
+	':BLACKURQ:' ç
+	':CHENJESU:' ç
+	':CHMMR:' ç
+	':DRUUGE:' ç
+	':HUMAN:' ç
+	':ILWRATH:' ç
+	':LASTBAT:' ç
+	':MELNORME:' ç
+	':MMRNMHRM:' ç
+	':MYCON:' ç
+	':ORZ:' ç
+	':PKUNK:' ç
+	':PROBE:' ç
+	':SHOFIXTI:' ç
+	':SIS_SHIP:' ç
+	':SLYLANDR:' ç
+	':SPATHI:' ç
+	':SUPOX:' ç
+	':SYREEN:' ç
+	':THRADD:' ç
+	':UMGAH:' ç
+	':URQUAN:' ç
+	':UTWIG:' ç
+	':VUX:' ç
+	':YEHAT:' ç
+	':ZOQFOT:'"
+
+for TheDir in {SHIPDIRS}
+	echo 'Backing up...' "{TheDir}"
+end
+echo 'Done'

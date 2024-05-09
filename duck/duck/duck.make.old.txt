@@ -1,0 +1,39 @@
+#DUCKOBJPATH = ::duckobjs
+DUCKOBJPATH = ::src.new:objects
+#DUCKINCPATH = ::duckincs
+DUCKINCPATH = ::src.new
+
+OBJECTS = ç
+		duck.o ç
+		{DUCKOBJPATH}:DuckMotion.c.o ç
+		{DUCKOBJPATH}:dx.s.o ç
+		{DUCKOBJPATH}:Async.c.o ç
+		{DUCKOBJPATH}:DuckPlayer.c.o ç
+		{DUCKOBJPATH}:AudioADPCM.c.o ç
+		ourVDL.o ç
+		{DUCKOBJPATH}:DuckDebug.c.o
+
+
+CC = armcc -zps1 -za1 -ff
+INCLUDES = -i {DUCKINCPATH},"{3DOIncludes}"
+
+SYSLIBS	=	"{3DOLibs}Lib3DO.lib"		ç
+		"{3DOLibs}operamath.lib"	ç
+		"{3DOLibs}filesystem.lib"	ç
+		"{3DOLibs}graphics.lib"		ç
+		"{3DOLibs}audio.lib"		ç
+		"{3DOLibs}music.lib"		ç
+		"{3DOLibs}input.lib"		ç
+		"{3DOLibs}clib.lib"		ç
+		"{3DOLibs}swi.lib"
+
+duck ÉÉ {OBJECTS} duck.make
+	armlink -aif -r -b 0x00 -workspace 0x4000 -o duck "{3DOLibs}cstartup.o" {OBJECTS} {SYSLIBS}
+	modbin duck -stack 8000
+	stripaif duck
+	duplicate -y duck "{3DORemote}"
+	beep
+	
+.o É .C
+	 {CC} {INCLUDES} {default}.C
+	 

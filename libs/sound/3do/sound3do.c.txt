@@ -1,0 +1,479 @@
+#include "types.h"
+#include "nodes.h"
+#include "task.h"
+#include "kernel.h"
+#include "audio.h"
+#include "debug.h"
+#include "operror.h"
+#include "filefunctions.h"
+
+enum
+{
+    MOD_TRACK,
+    RED_BOOK_TRACK,
+
+    NUM_TRACK_TYPES
+};
+
+typedef struct
+{
+    ulong		TrackRef;
+    unsigned char	*TrackPtr;
+} TRACK_DESC;
+
+extern TRACK_DESC	volatile _TrackList[NUM_TRACK_TYPES];
+
+#define MAX_CHANNELS	4
+#define PHYS_CHANNELS	4
+#define LOG_CHANNELS	8
+#define MAX_SAMPLES	100
+
+#define REDBOOK_CHANNELS	2
+
+static struct
+{
+    ulong	SampLen;
+    uchar	*Sample;
+} SoundDesc[PHYS_CHANNELS];
+static int32	ServiceSignal;
+static Item	ServiceItem;
+
+static struct
+{
+    uchar	Priority;
+    ulong	FinishTime;
+    ulong	CurFreq, CurVol;
+    Item	SampleIns, AttachItem;
+    Item	FreqKnob, VolKnob;
+    Item	LeftGainKnob, RightGainKnob;
+} ChanDesc[PHYS_CHANNELS];
+static Item	sample_arena[MAX_SAMPLES];
+static uchar	free_list;
+static uchar	service_waiting;
+
+static int	MusicPlaying;
+
+static Item	MixerTmp, SampleTmp;
+static Item	MixerIns;
+
+extern void	SuspendTasking (void);
+extern void	ResumeTasking (void);
+extern ulong	GetTimeCounter (void);
+
+int AllocHardwareSample (uchar *Samp, ulong SampRate, ulong SampLen, ulong LoopBegin, ulong LoopLen)
+{
+    uchar	id;
+
+    if ((id = free_list) < MAX_SAMPLES)
+    {
+	Item	SampItem;
+	TagArg	Tags[9];
+
+	Tags[0].ta_Tag = AF_TAG_ADDRESS;
+	Tags[0].ta_Arg = (int32 *)Samp;
+
+	Tags[1].ta_Tag = AF_TAG_NUMBYTES;
+	Tags[1].ta_Arg = (int32 *)SampLen;
+
+	Tags[2].ta_Tag = TAG_END;
+	if ((SampItem = CreateItem (MKNODEID (AUDIONODE, AUDIO_SAMPLE_NODE), Tags)) >= 0)
+	{
+	    Tags[0].ta_Tag = AF_TAG_WIDTH;
+	    Tags[0].ta_Arg = (int32 *)1;
+    
+	    Tags[1].ta_Tag = AF_TAG_NUMBITS;
+	    Tags[1].ta_Arg = (int32 *)8;
+    
+	    Tags[2].ta_Tag = AF_TAG_CHANNELS;
+	    Tags[2].ta_Arg = (int32 *)1;
+    
+	    Tags[3].ta_Tag = AF_TAG_FRAMES;
+	    Tags[3].ta_Arg = (int32 *)SampLen;
+    
+	    Tags[4].ta_Tag = AF_TAG_BASENOTE;
+	    Tags[4].ta_Arg = (int32 *)60;
+    
+	    Tags[5].ta_Tag = AF_TAG_SAMPLE_RATE;
+	    Tags[5].ta_Arg = (int32 *)(SampRate << 16);
+    
+	    if (LoopLen == 0)
+	    {
+		Tags[6].ta_Tag = AF_TAG_SUSTAINBEGIN;
+		Tags[6].ta_Arg = (int32 *)-1;
+	
+		Tags[7].ta_Tag = AF_TAG_SUSTAINEND;
+		Tags[7].ta_Arg = (int32 *)-1;
+	    }
+	    else
+	    {
+		Tags[6].ta_Tag = AF_TAG_SUSTAINBEGIN;
+		Tags[6].ta_Arg = (int32 *)LoopBegin;
+	
+		Tags[7].ta_Tag = AF_TAG_SUSTAINEND;
+		Tags[7].ta_Arg = (int32 *)(LoopBegin + LoopLen - 1);
+	    }
+    
+	    Tags[8].ta_Tag = TAG_END;
+	    if (SetAudioItemInfo (SampItem, Tags) == 0)
+	    {
+		free_list = (uchar)sample_arena[id];
+		sample_arena[id] = SampItem;
+	    }
+	    else
+	    {
+		DeleteItem (SampItem);
+		id = 0xFF;
+	    }
+	}
+    }
+
+    Samp[SampLen] = id;
+    return (id != 0xFF);
+}
+
+int FreeHardwareSample (uchar *Samp, ulong SampLen)
+{
+    uchar	id;
+
+    if (SampLen && (id = Samp[SampLen]) < MAX_SAMPLES)
+    {
+	DeleteItem (sample_arena[id]);
+	
+	sample_arena[id] = (Item)free_list;
+	free_list = id;
+	
+Samp[SampLen] = 0xFF;
+
+	return (1);
+    }
+    
+    return (0);
+}
+
+void _set_sound_interrupt (void)
+{
+    ++MusicPlaying;
+}
+
+void _clr_sound_interrupt (void)
+{
+    --MusicPlaying;
+}
+
+#define LOG_TO_PHYS_CHANNEL(c) \
+    (_TrackList[MOD_TRACK].TrackPtr == 0) ? \
+    ((c) & (MAX_CHANNELS - 1)) \
+    : ((c) & (((c) >> 1) | 1))
+
+static void
+stop_phys_channel (ulong Channel)
+{
+    SuspendTasking ();
+    SoundDesc[Channel].SampLen = (ulong)-1;
+    SoundDesc[Channel].Sample = 0;
+	
+    ChanDesc[Channel].Priority = 0;
+    ChanDesc[Channel].FinishTime = 0;
+
+    SendSignal (ServiceItem, ServiceSignal);
+    ResumeTasking ();
+}
+
+int ChannelPlaying (ulong Channel)
+{
+    if (Channel >= PHYS_CHANNELS)
+	return (MusicPlaying);
+    else
+    {
+	Channel = LOG_TO_PHYS_CHANNEL (Channel);
+	if (ChanDesc[Channel].FinishTime)
+	{
+	    if (GetTimeCounter () <= ChanDesc[Channel].FinishTime)
+		return (1);
+	    stop_phys_channel (Channel);
+	}
+
+	ChanDesc[Channel].Priority = 0;
+	return (0);
+    }
+}
+
+#define SCALE_FREQ(F)	(((F) * 3) >> 2)
+
+void PlayChannel (ulong Channel, uchar *lpSample, ulong SampLen, ulong LoopBegin, ulong LoopLength, uchar Priority)
+{
+    Channel = LOG_TO_PHYS_CHANNEL (Channel);
+
+    if (SampLen
+	    && (Priority >= ChanDesc[Channel].Priority
+	    || !ChannelPlaying (Channel)))
+    {
+	SuspendTasking ();
+
+	SoundDesc[Channel].Sample = lpSample;
+	SoundDesc[Channel].SampLen = SampLen;
+	
+	if (LoopLength)
+	    ChanDesc[Channel].FinishTime = 0xFFFFFFFF;
+	else
+	{
+#define ONE_SECOND	128
+	    ChanDesc[Channel].FinishTime = GetTimeCounter ()
+		    + SampLen * ONE_SECOND / ChanDesc[Channel].CurFreq;
+	}
+	ChanDesc[Channel].Priority = Priority;
+
+	ResumeTasking ();
+	SendSignal (ServiceItem, ServiceSignal);
+    }
+}
+
+ulong	_master_volume = 128;
+
+void SetMasterVolume (ulong Volume)
+{
+    int	i;
+
+    _master_volume = Volume;
+    Volume = 0x4000 * Volume / 128;    
+    for (i = 0; i < PHYS_CHANNELS; ++i)
+    {
+	if (!(i & 1))
+	    TweakKnob (ChanDesc[i].LeftGainKnob, Volume);
+	else
+	    TweakKnob (ChanDesc[i].RightGainKnob, Volume);
+    }
+}
+
+void SetChannelVolume (ulong Channel, ulong Volume, uchar Priority)
+{
+    Channel = LOG_TO_PHYS_CHANNEL (Channel);
+
+    SuspendTasking ();
+    if (Priority >= ChanDesc[Channel].Priority || !ChannelPlaying (Channel))
+    {
+	if (Volume = Volume << (15 - 7))
+	    --Volume;
+	
+	if (ChanDesc[Channel].AttachItem)
+	    TweakKnob (ChanDesc[Channel].VolKnob, Volume);
+	ChanDesc[Channel].CurVol = Volume;
+	ChanDesc[Channel].Priority = Priority;
+    }
+    ResumeTasking ();
+}
+
+void SetChannelRate (ulong Channel, ulong Rate, uchar Priority)
+{
+    Channel = LOG_TO_PHYS_CHANNEL (Channel);
+
+    SuspendTasking ();
+    if (Priority >= ChanDesc[Channel].Priority || !ChannelPlaying (Channel))
+    {
+	if (ChanDesc[Channel].AttachItem)
+	    TweakKnob (ChanDesc[Channel].FreqKnob, SCALE_FREQ (Rate));
+	ChanDesc[Channel].CurFreq = Rate;
+	ChanDesc[Channel].Priority = Priority;
+    }
+    ResumeTasking ();
+}
+
+void StopChannel (ulong Channel, uchar Priority)
+{
+    Channel = LOG_TO_PHYS_CHANNEL (Channel);
+
+    if (Priority >= ChanDesc[Channel].Priority)
+	stop_phys_channel (Channel);
+}
+
+int SoundPlaying (void)
+{
+    int	i;
+    
+    for (i = 0; i < LOG_CHANNELS; ++i)
+    {
+	if (ChannelPlaying (i))
+	    return (1);
+    }
+	    
+    return (0);
+}
+
+void StopSound (void)
+{
+    int	i;
+    
+    for (i = 0; i < PHYS_CHANNELS; ++i)
+	stop_phys_channel (i);
+}
+
+static
+void sound_service ()
+{
+    OpenAudioFolio ();
+    ServiceSignal = AllocSignal (0);
+    for (;;)
+    {
+	int	Channel;
+
+	service_waiting = 1;
+	WaitSignal (ServiceSignal);
+	for (Channel = 0; Channel < PHYS_CHANNELS; ++Channel)
+	{
+	    ulong	SampLen;
+	    
+	    if (SampLen = SoundDesc[Channel].SampLen)
+	    {
+		int32	status;
+		Item	SampItem;
+		ulong	Freq;
+		TagArg	Tags[2];
+
+		SoundDesc[Channel].SampLen = 0;
+		
+		if (ChanDesc[Channel].AttachItem)
+		{
+		    status = ReleaseInstrument (ChanDesc[Channel].SampleIns, 0);
+#define DEBUG
+#ifdef DEBUG
+		    if (status < 0)
+			PrintfSysErr (status);
+#endif /* DEBUG */
+		    status = DetachSample (ChanDesc[Channel].AttachItem);
+#ifdef DEBUG
+		    if (status < 0)
+			PrintfSysErr (status);
+#endif /* DEBUG */
+		}
+		
+		if (!SoundDesc[Channel].Sample)
+		{
+		    ChanDesc[Channel].AttachItem = 0;
+		    continue;
+		}
+		
+		SampItem = sample_arena[SoundDesc[Channel].Sample[SampLen]];
+// DebugSample (SampItem);
+		ChanDesc[Channel].AttachItem = AttachSample (
+			ChanDesc[Channel].SampleIns, SampItem, 0
+			);
+		if (ChanDesc[Channel].AttachItem < 0)
+		{
+#ifdef DEBUG
+		    PrintfSysErr (ChanDesc[Channel].AttachItem);
+#endif /* DEBUG */
+		    ChanDesc[Channel].AttachItem = 0;
+		    continue;
+		}
+
+		Freq = SCALE_FREQ (ChanDesc[Channel].CurFreq);
+		Tags[0].ta_Tag = AF_TAG_FREQUENCY;
+		Tags[0].ta_Arg = (int32 *) Freq;
+		Tags[1].ta_Tag = TAG_END;
+		status = StartInstrument (ChanDesc[Channel].SampleIns, Tags);
+#ifdef DEBUG
+		if (status < 0)
+		    PrintfSysErr (status);
+#endif /* DEBUG */
+    
+		TweakKnob (ChanDesc[Channel].FreqKnob, Freq);
+		TweakKnob (ChanDesc[Channel].VolKnob, ChanDesc[Channel].CurVol);
+
+	    }
+	}
+    }
+}
+
+int InitSound (int argc, char *argv[])
+{
+    int	i;
+
+// only for 1.3.1?????
+    OpenAudioFolio ();
+
+    MixerTmp = LoadInsTemplate ("mixer8x2.dsp", 0);
+    SampleTmp = LoadInsTemplate ("varmono8.dsp", 0);
+    
+    MixerIns = AllocInstrument (MixerTmp, 0);
+    for (i = 0; i < PHYS_CHANNELS; ++i)
+    {
+	char	buf[20];
+
+	sprintf (buf, "LeftGain%d", i + REDBOOK_CHANNELS);
+	ChanDesc[i].LeftGainKnob = GrabKnob (MixerIns, buf);
+	TweakKnob (ChanDesc[i].LeftGainKnob, (i & 1) ? 0 : 0x4000);
+	sprintf (buf, "RightGain%d", i + REDBOOK_CHANNELS);
+	ChanDesc[i].RightGainKnob = GrabKnob (MixerIns, buf);
+	TweakKnob (ChanDesc[i].RightGainKnob, (i & 1) ? 0x4000 : 0);
+
+	if ((ChanDesc[i].SampleIns = AllocInstrument (SampleTmp, 100)) > 0)
+	{
+	    ChanDesc[i].FreqKnob = GrabKnob (ChanDesc[i].SampleIns, "Frequency");
+	    ChanDesc[i].VolKnob = GrabKnob (ChanDesc[i].SampleIns, "Amplitude");
+	    sprintf (buf, "Input%d", i + REDBOOK_CHANNELS);
+	    ConnectInstruments (ChanDesc[i].SampleIns, "Output", MixerIns, buf);
+	}
+    }
+    StartInstrument (MixerIns, 0);
+
+    for (i = 0; i < MAX_SAMPLES - 1; ++i)
+	sample_arena[i] = (Item)(i + 1);
+    sample_arena[MAX_SAMPLES - 1] = (Item)0xFF;
+    free_list = 0;
+
+    ServiceItem = CreateThread (
+	    "sound_service",
+	    KernelBase->kb_CurrentTask->t.n_Priority + 10,
+	    sound_service,
+	    (4096 + 1024 + 3) & ~3
+	    );
+
+    return (_init_CD (MixerIns));
+}
+
+int UninitSound (void)
+{
+    int	i;
+
+    SuspendTasking ();
+    SuspendTasking ();
+    
+    service_waiting = 0;
+
+    StopSound ();
+    
+    ResumeTasking ();
+    ResumeTasking ();
+    
+    while (!service_waiting)
+	Yield ();
+
+    DeleteThread (ServiceItem);
+    
+    for (i = 0; i < PHYS_CHANNELS; ++i)
+    {
+	char	buf[20];
+
+	if (ChanDesc[i].SampleIns > 0)
+	{
+	    sprintf (buf, "Input%d", i + REDBOOK_CHANNELS);
+	    DisconnectInstruments (ChanDesc[i].SampleIns, "Output", MixerIns, buf);
+ 	    ReleaseKnob (ChanDesc[i].VolKnob);
+ 	    ReleaseKnob (ChanDesc[i].FreqKnob);
+	    FreeInstrument (ChanDesc[i].SampleIns);
+	}
+
+	ReleaseKnob (ChanDesc[i].RightGainKnob);
+	ReleaseKnob (ChanDesc[i].LeftGainKnob);
+    }
+    
+    _uninit_CD (); // before I free mixer, since StopTrack may use it
+    
+    FreeInstrument (MixerIns);
+    UnloadInsTemplate (SampleTmp);
+    UnloadInsTemplate (MixerTmp);
+
+    MusicPlaying = 0;
+    
+    return (1);
+}

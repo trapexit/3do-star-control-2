@@ -1,0 +1,36 @@
+Changes as of 3/17 version:
+
+Meteor bugs (could get money for objects destroyed)
+Price changes for battle items
+Wimbli fixes (now shows up when loaded from saved game)
+Jugger shadows correct when eating
+Harvest screen title added
+Boring hordlings avoid water
+Demo implemented (although it's a little screwy)
+Title screen integrated into horde.pkg
+Sorting bug (could explain crashes, esp. in Tree Realms)
+Can now place cows when knights max'ed out
+Pygmies hiding in trees now visible on map
+Hordling distribution slightly modified
+Confirmation/warning when deleting save games and
+	before clearing out NVRAM
+
+
+Changes as of 3/21 version:
+
+Fixed hang when died with knights/archers around,
+	and possibly when loading game when previous game
+	had knights/archers
+Disallow digging of ice in snow level (can dig water during summers)
+Trident can no longer destroy flute
+Volume back to original level, video volume now reasonable
+Raised rates of knight/archer enchant sounds (were too low)
+Fixed bugs where hordlings could disappear when:
+	1) being hit by frogs or moving haunches AND
+	2) hordling is already eating, or is doing something special
+		(i.e., pygmy shooting, snowman throwing or kicking,
+		shaman being a shaman!)
+Moved map up when going to Vesh -- could see garbage at top
+	of screen before
+Found and corrected possible cause of Wimbli trident crash
+

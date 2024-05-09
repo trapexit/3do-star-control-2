@@ -1,0 +1,37 @@
+Susan,
+
+The following bugs are fixed in your CURRENT version:
+
+    A -- 36, 190, 292
+
+    B -- 35, 37, 54, 58, 74, 79, 104, 113, 115, 305
+
+    C -- 192, 195, 244, 277, 279, 317, 326
+
+The following will be fixed in the NEXT version:
+
+    B -- 216, 236, 257, 278, 290, 301, 319, 320
+    
+The following are not bugs (perhaps they are design issues):
+
+    B -- 300, 308
+    
+    C -- 299, 315
+    
+    S -- 269
+    
+As for the WDS variety, the following are fixed in the CURRENT
+version:
+
+    A -- 193
+    
+    C -- 309
+    
+We were able to reproduce the crash in the Tree Realms.  We
+found where it's crashing, but couldn't find a specific cause.
+We did change a lot of the logic in this area since your CURRENT
+version -- when we tried to crash again after the code changes,
+we couldn't, so please attempt to duplicate the crashes with the
+NEXT version (which will arrive today sometime).
+
+Thanks,

@@ -1,0 +1,6 @@
+ armcc -zps1 -za1 -ff -g -Wa -i "{3DOIncludes}" {FLAGS} pl_stuff.C
+ 
+armlink -aif -r -b 0x00 -workspace 0x4000 -d -o planet "{3DOLibs}cstartup.o" planet.o pl_stuff.o mapcel.a "{3DOLibs}Lib3DO.lib" "{3DOLibs}operamath.lib" "{3DOLibs}filesystem.lib" "{3DOLibs}graphics.lib" "{3DOLibs}audio.lib" "{3DOLibs}music.lib" "{3DOLibs}input.lib" "{3DOLibs}clib.lib" "{3DOLibs}swi.lib"
+modbin planet -stack 8000 -debug
+duplicate -y planet "{3DORemote}"
+

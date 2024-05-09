@@ -1,0 +1,32 @@
+set BackupDisk 'SC2Backup1'
+set BackupDir {BackupDisk}':starcon2'
+set SC2_Sources  ':¦.c'
+set SC2_Headers  ':¦.h'
+
+if (`exists -d {BackupDisk}:` != {BackupDisk}:)
+    echo '3DO backup disk misnamed -- must be SC2Backup1'
+    exit 1
+end
+
+if (`exists -d {BackupDir}` != {BackupDir})
+    echo 'Creating a new folder -- starcon2'
+    newfolder {BackupDir}
+end
+
+sc2
+echo 'Backing up sc2 sources...'
+backup -a -c {SC2_Sources} -to {BackupDir} > commands
+execute commands
+echo 'Backup of sc2 sources complete.'
+
+echo 'Backing up sc2 headers...'
+backup -a -c {SC2_Headers} -to {BackupDir} > commands
+execute commands
+echo 'Backup of sc2 headers complete.'
+
+echo 'Backing up sc2.make...'
+backup -a -c sc2.make -to {BackupDir} > commands
+execute commands
+echo 'Backup of sc2.make complete'
+
+echo 'SC2 backup #1 complete.'

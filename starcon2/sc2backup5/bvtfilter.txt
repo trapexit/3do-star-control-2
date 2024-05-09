@@ -1,0 +1,70 @@
+set srcfile 'zoqfot.c'
+set dstfile 'alientext.h'
+set enumfile 'alienindex.h'
+set modfile 'alienmods.h'
+set enumstart 'indextmp.h'
+
+open {enumfile}
+open {srcfile}
+
+# Duplicate index template
+duplicate -y {enumstart} {enumfile}
+
+# Create the enum file of speech indices.
+echo 'Creating the index file...'
+find ï {srcfile}
+set Exit 0 # disable termination on error.
+Loop
+	(find /[ç*]+([A-Za-z0-9_])´2,ª/ {srcfile} && catenate "{srcfile}.ß" >> {enumfile})
+	break if {status}
+End
+set Exit 1 # re-enable termination on error.
+# Add commas, remove asterisks, close enum and ifdef.
+find ï {enumfile}
+replace -c Ä /[ç*]+(([A-Za-z0-9_])´2,ª)Æ1/ "Æ1ç,çn" {enumfile}
+find Ä {enumfile}
+replace \,\ ",çn};çn" {enumfile}
+echo "#endif ç/ç* _ALIENINDEX_H ç*ç/çn" | catenate >> {enumfile}
+echo "Index file completed."
+
+# Create the modname file.
+echo 'Creating the modname file...'
+duplicate -y {enumfile} {modfile}
+open {modfile}
+find ï {modfile}
+replace -c 2 /ALIENINDEX/ "ALIENMODS" {modfile}
+replace /enum/ "const char ç*alien_modfilesç[ç] ç=" {modfile}
+replace -c Ä /(([A-Z_])´2,ª¶)Æ1,/ "ç"Æ1.MODç"," {modfile}
+replace -c 1 /ALIENINDEX/ "ALIENMODS" {modfile}
+find ï {modfile}
+find /ç{/ {modfile}
+replace -c Ä /([a-z_])´2,ª¶,/ "ç"ç"," {modfile}
+close {modfile}
+echo "Modname file completed."
+
+# Add last enum entry to index file
+find Ä {enumfile}
+find ≠\ç,\ {enumfile}
+replace -c 1 /ç,/ "ç,çnNUM_ENTRIES" {enumfile}
+close -y {enumfile}
+
+# Create the conversation strings file.
+echo 'Creating the conversation strings file...'
+open -n {dstfile}
+echo "#ifndef _ALIENTEXT_H" | catenate >> {dstfile}
+echo "#define _ALIENTEXT_Hçn" | catenate >> {dstfile}
+echo "const char ç*alien_textç[ç] ç=çnç{" | catenate >> {dstfile}
+find ï:Ä {srcfile} && catenate "{srcfile}.ß" >> {dstfile}
+echo "ç};çnçn#endif ç/ç* _ALIENTEXT_H ç*ç/" | catenate >> {dstfile}
+find ï {dstfile}
+find /ç{/ {dstfile}
+replace -c Ä /const¶ç=/ "" {dstfile}
+find ï {dstfile}
+find /ç{/ {dstfile}
+replace -c Ä /ç"[ ]*;/ "ç"," {dstfile}
+echo "Conversation strings file completed."
+
+close -y {srcfile}
+close -y {dstfile}
+
+

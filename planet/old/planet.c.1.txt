@@ -1,0 +1,527 @@
+#include "Portfolio.h"
+#include "Init3DO.h"
+#include "Parse3DO.h"
+#include "Utils3DO.h"
+#include "filefunctions.h"
+#include "BlockFile.h"
+
+#define INITIAL_DIRECTORY	"$boot"
+
+#ifdef DEBUG
+#define PRD(s)		printf s
+#define SYSERR(e)	PrintfSysErr (e)
+#else /* DEBUG */
+#define PRD(s)
+#define SYSERR(e)
+#endif /* DEBUG */
+
+#define NUMBER_OF_SCREENS	2
+
+#define SHADOW_COLOR		(0x18c6) // Shadow color... sleazy
+
+#define PIXC_DUP(v)		(((v) << PPMP_0_SHIFT) | ((v) << PPMP_1_SHIFT))
+#define PIXC_UNCODED16		(PIXC_DUP (PPMPC_MF_8 | PPMPC_SF_8))
+
+#define SET_CEL_FLAGS(c,f)	((c)->ccb_Flags |= (f))
+#define CLR_CEL_FLAGS(c,f)	((c)->ccb_Flags &= ~(f))
+
+#define CEL_FLAGS \
+	(CCB_SPABS | CCB_PPABS | CCB_YOXY | CCB_ACW | CCB_ACCW | CCB_LDSIZE | CCB_CCBPRE \
+	| CCB_LDPRS | CCB_LDPPMP | CCB_ACE | CCB_LCE | CCB_PLUTPOS | CCB_BGND)
+
+#define NUM_NORMAL_CELS		500
+
+#define NUMBER_OF_CLUTVALS	32
+
+#define SCREEN_WIDTH		320
+#define SCREEN_HEIGHT		240
+
+typedef struct
+{
+    int32 	sc_curScreen;
+    int32 	sc_nFrameBufferPages;
+    int32 	sc_nFrameByteCount;
+    Item 	sc_Screens[NUMBER_OF_SCREENS];
+    Item	sc_BitmapItems[NUMBER_OF_SCREENS];
+    Bitmap	*sc_Bitmaps[NUMBER_OF_SCREENS];
+} ourScreenContext;
+
+static ourScreenContext	theScreen;
+static Item		theScreenGroup;
+
+static CCB	*cel_array;
+static CCB	*cur_ccb, *final_ccb;
+
+static Item	VRAMIOReq;
+
+static Point	cel_pt[4];
+
+static void
+BlackenScreen (int mask, int frame_ct)
+{
+    int		i;
+    uint32	colorEntries[NUMBER_OF_CLUTVALS], *ce;
+
+    ce = colorEntries;
+    for (i = 0; i < NUMBER_OF_CLUTVALS; i++)
+	*ce++ = MakeCLUTColorEntry (i, 0, 0, 0);
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (mask & (1 << i))
+    	    SetScreenColors (theScreen.sc_Screens[i],
+ 		    colorEntries, NUMBER_OF_CLUTVALS);
+    }
+	
+    SetScreenColor (0, MakeCLUTColorEntry (NUMBER_OF_CLUTVALS, 0, 0, 0));
+}
+
+static void
+LightenScreen (int mask, int frame_ct)
+{
+    int		i;
+    uint32	colorEntries[NUMBER_OF_CLUTVALS], *ce;
+
+    ce = colorEntries;
+    for (i = 0; i < NUMBER_OF_CLUTVALS; i++)
+    {
+	ubyte	color;
+	
+	color = (i << 3) | (i >> 2);
+	*ce++ = MakeCLUTColorEntry (i, color, color, color);
+    }
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (mask & (1 << i))
+    	    SetScreenColors (theScreen.sc_Screens[i],
+ 		    colorEntries, NUMBER_OF_CLUTVALS);
+    }
+
+// ??????????
+    SetScreenColor (0, MakeCLUTColorEntry (NUMBER_OF_CLUTVALS, 0, 0, 0));
+}
+
+static bool
+ourOpenGraphics (ourScreenContext *sc, Item *gItem, int32 h)
+{
+    Int32	i, w;
+    int32	bmpages, bmsize;
+    TagArg	taScreenTags[6], *t;
+    void	*bmbuf[MAXSCREENS];
+    extern Item	SPORTDevice;
+
+    if (!SPORTDevice)
+    {
+	if (OpenGraphicsFolio () || !OpenSPORT ())
+	{
+	    PRD (("Cannot open graphics folio\n"));
+	    return FALSE;
+	}
+    }
+
+    w = SCREEN_WIDTH;
+    bmpages = (w * 2 * h
+	    + GrafBase->gf_VRAMPageSize - 1) 
+	    / GrafBase->gf_VRAMPageSize;
+    bmsize = bmpages * GrafBase->gf_VRAMPageSize;
+
+#ifdef ALLOC_SEPARATELY    
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+	bmbuf[i] = 0;
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (!(bmbuf[i] = AllocMem (bmsize,
+		MEMTYPE_VRAM | MEMTYPE_FILL | 0)))
+	    goto Failure;
+    }
+#else
+    bmbuf[0] = AllocMem (bmsize * NUMBER_OF_SCREENS,
+	    MEMTYPE_VRAM | MEMTYPE_FILL | 0);
+    if (!bmbuf[0])
+	goto Failure;
+    for (i = 1; i < NUMBER_OF_SCREENS; i++)
+	bmbuf[i] = (void *)((char *)bmbuf[i - 1] + bmsize);
+#endif
+	
+    t = taScreenTags;
+    t->ta_Tag = CSG_TAG_SCREENCOUNT;
+    t->ta_Arg = (void *)NUMBER_OF_SCREENS;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPCOUNT;
+    t->ta_Arg = (void *)NUMBER_OF_SCREENS;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPBUF_ARRAY;
+    t->ta_Arg = (void *)bmbuf;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPWIDTH_ARRAY;
+    t->ta_Arg = (void *)&w;
+    t++;
+    t->ta_Tag = CSG_TAG_BITMAPHEIGHT_ARRAY;
+    t->ta_Arg = (void *)&h;
+    t++;
+    t->ta_Tag = CSG_TAG_DONE;
+	
+    *gItem = CreateScreenGroup (&(sc->sc_Screens[0]), taScreenTags);
+    if (*gItem < 0)
+    {
+	PRD (("Cannot create screen group"));
+	SYSERR (*gItem);
+	goto Failure;
+    }
+    
+    AddScreenGroup (*gItem, NULL);
+
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	Screen	*screen;
+	
+	if ((screen = (Screen *)LookupItem (sc->sc_Screens[i])) == NULL) 
+	{
+	    PRD (("%d: Cannot locate screen\n", i));
+	    goto Failure;
+	}
+	
+	sc->sc_BitmapItems[i] = screen->scr_TempBitmap->bm.n_Item;
+	sc->sc_Bitmaps[i] = screen->scr_TempBitmap;
+	EnableHAVG (sc->sc_Screens[i]);
+	EnableVAVG (sc->sc_Screens[i]);
+    }
+
+    sc->sc_nFrameBufferPages = bmpages;
+    sc->sc_nFrameByteCount = bmsize;
+    sc->sc_curScreen = 0;
+
+    return TRUE;
+    
+Failure:
+#ifdef ALLOC_SEPARATELY
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if (bmbuf[i])
+	    FreeMem (bmbuf[i], bmsize);
+    }
+#else
+    if (bmbuf[0])
+	FreeMem (bmbuf[0], bmsize * NUMBER_OF_SCREENS);
+#endif
+    
+    return FALSE;
+}
+
+static void
+ourCloseGraphics (ourScreenContext *sc, Item sgItem)
+{
+    int		i;
+    int32	errorCode;
+
+    if ((errorCode = RemoveScreenGroup (sgItem)) < 0)
+    {
+	PRD (("RemoveScreenGroup failed -- "));
+	SYSERR (errorCode);
+    }
+
+    if ((errorCode = DeleteItem (sgItem)) < 0)
+    {
+	PRD (("DeleteScreenGroup failed -- "));
+	SYSERR (errorCode);
+    }
+    
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	Screen	*screen;
+		
+	screen = (Screen *)LookupItem (sc->sc_Screens[i]);
+	if ((errorCode = DeleteItem (screen->scr_VDLItem)) < 0)		
+	{
+	    PRD (("%d: DeleteItem of VDL failed -- ", i));
+	    SYSERR (errorCode);
+	}
+    }
+
+#ifdef ALLOC_SEPARATELY
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	FreeMem (sc->sc_Bitmaps[i]->bm_Buffer, sc->sc_nFrameByteCount);
+	bmbuf[i] = 0;
+    }
+#else
+    FreeMem (sc->sc_Bitmaps[0]->bm_Buffer,
+	    sc->sc_nFrameByteCount * NUMBER_OF_SCREENS);
+#endif
+	
+    for (i = 0; i < NUMBER_OF_SCREENS; i++)
+    {
+	if ((errorCode = DeleteItem (sc->sc_BitmapItems[i])) < 0)
+	{
+	    PRD (("%d: DeleteItem of Bitmap failed -- ", i));
+	    SYSERR (errorCode);
+	}
+	if ((errorCode = DeleteItem (sc->sc_Screens[i])) < 0)
+	{
+	    PRD (("%d: DeleteItem of Screen failed -- ", i));
+	    SYSERR (errorCode);
+	}
+    }
+
+    ScavengeMem (); // necessary after FreeMem to return memory to system
+}
+
+int
+Init3DO (void)
+{
+    if (ourOpenGraphics (&theScreen, &theScreenGroup, SCREEN_HEIGHT))
+    {
+	int	i;
+
+	if (ChangeDirectory (INITIAL_DIRECTORY) < 0)
+	    return (0);
+
+	if (!VRAMIOReq)
+	    VRAMIOReq = GetVRAMIOReq ();
+
+	if (!cel_array
+		&& !(cel_array = (CCB *)AllocMem (
+			sizeof (CCB) * NUM_NORMAL_CELS,
+			MEMTYPE_ANY | MEMTYPE_FILL | 0)))
+	    return (0);
+
+	for (cur_ccb = &cel_array[0], i = NUM_NORMAL_CELS;
+		i > 0; i--, cur_ccb++)
+	{
+	    cur_ccb->ccb_Flags = CEL_FLAGS;
+	    cur_ccb->ccb_NextPtr = (void *)MakeCCBRelative (&cur_ccb->ccb_NextPtr, cur_ccb + 1);
+	}
+	
+	cur_ccb = &cel_array[0];
+	final_ccb = &cel_array[NUM_NORMAL_CELS - 1];
+	
+	for (i = 0; i < NUMBER_OF_SCREENS; i++)
+	{
+	    SetCEControl (theScreen.sc_BitmapItems[i],
+		    B15POS_PDC | CFBDLSB_CFBD0 | PDCLSB_PDC0,
+		    B15POS_MASK | CFBDLSB_MASK | PDCLSB_MASK);
+
+	    SetVRAMPages (VRAMIOReq, theScreen.sc_Bitmaps[i]->bm_Buffer,
+		    0, theScreen.sc_nFrameBufferPages, ~0);
+	}
+
+	BlackenScreen ((1 << 0) | (1 << 1), 0);
+	DisplayScreen (theScreen.sc_Screens[theScreen.sc_curScreen], 0);
+	LightenScreen ((1 << 0) | (1 << 1), 0);
+
+	return (1);
+    }
+	
+    return (0);
+}
+
+void
+Uninit3DO (void)
+{
+    theScreen.sc_curScreen = !theScreen.sc_curScreen;
+    SetVRAMPages (VRAMIOReq,
+	    theScreen.sc_Bitmaps[theScreen.sc_curScreen]->bm_Buffer,
+	    0, theScreen.sc_nFrameBufferPages, ~0);
+
+    DisplayScreen (theScreen.sc_Screens[theScreen.sc_curScreen], 0);
+    BlackenScreen (1 << theScreen.sc_curScreen, 0);
+    
+    if (cel_array)
+    {
+	FreeMem (cel_array, sizeof (CCB) * NUM_NORMAL_CELS);
+	cel_array = 0;
+    }
+
+    if (VRAMIOReq)
+    {
+	DeleteItem (VRAMIOReq);
+	VRAMIOReq = 0;
+    }
+
+    if (theScreenGroup)
+    {
+	ourCloseGraphics (&theScreen, theScreenGroup);
+	theScreenGroup = 0;
+    }
+}
+
+void
+batch_cels ()
+{
+    Item	BitmapItem;
+    CCB		*last_ccb;
+
+    BitmapItem = theScreen.sc_BitmapItems[!theScreen.sc_curScreen];
+	
+    if (cur_ccb != &cel_array[0])
+    {
+	last_ccb = --cur_ccb;
+	SET_CEL_FLAGS (last_ccb, CCB_LAST);
+	cur_ccb = &cel_array[0];
+
+	DrawCels (BitmapItem, (CCB *)cel_array);
+
+	CLR_CEL_FLAGS (last_ccb, CCB_LAST);
+    }
+
+    theScreen.sc_curScreen = !theScreen.sc_curScreen;
+    DisplayScreen (theScreen.sc_Screens[theScreen.sc_curScreen], 0);
+}
+
+void
+blt_cel (void *data, long len, int x, int y, int h)
+{
+    CCB	*ccb;
+
+    if (!(ccb = ParseCel (data, len)))
+	return;
+		
+    *cur_ccb = *ccb;
+    CLR_CEL_FLAGS (cur_ccb, CCB_NPABS | CCB_LAST);
+    SET_CEL_FLAGS (cur_ccb, CCB_PPABS | CCB_ACE | CCB_LCE);
+    cur_ccb->ccb_NextPtr = (void *)MakeCCBRelative (&cur_ccb->ccb_NextPtr, cur_ccb + 1);
+
+    if (!h)
+    {
+	cur_ccb->ccb_PIXC = PIXC_DUP (0x85c2);
+	SET_CEL_FLAGS (cur_ccb, CCB_USEAV);
+	cur_ccb->ccb_XPos = x << 16;
+	cur_ccb->ccb_YPos = y << 16;
+	cur_ccb++;
+	
+	return;
+    }
+    
+    cur_ccb->ccb_SourcePtr = (void *)((int32 *)cur_ccb->ccb_SourcePtr
+	    + y * (cur_ccb->ccb_Width >> 1) + ((x/*cur_ccb->ccb_Width >> 2*/) >> 1));     
+    cur_ccb->ccb_PRE0 &= ~((0xf << 24) | (0x3ff << 6));
+    cur_ccb->ccb_PRE1 &= ~((0x3ff << 0));
+    cur_ccb->ccb_PRE0 |= ((h - 1) << 6);
+    cur_ccb->ccb_PRE1 |= (((cur_ccb->ccb_Width >> 1) - 1) << 0);
+
+    cur_ccb->ccb_Width >>= 1;
+    cur_ccb->ccb_Height = 1;
+
+    MapCel (cur_ccb, cel_pt);
+    
+    cur_ccb++;
+}
+
+#define SET_CEL_PTS(x,y) \
+	cel_pt[0].pt_X = (x), \
+	cel_pt[0].pt_Y = (y), \
+	cel_pt[1].pt_X = cel_pt[0].pt_X + WIDTH - 1, \
+	cel_pt[1].pt_Y = cel_pt[0].pt_Y, \
+	cel_pt[2].pt_X = cel_pt[0].pt_X + WIDTH - 1, \
+	cel_pt[2].pt_Y = cel_pt[0].pt_Y + HEIGHT - 1, \
+	cel_pt[3].pt_X = cel_pt[0].pt_X, \
+	cel_pt[3].pt_Y = cel_pt[0].pt_Y + HEIGHT - 1;
+
+void
+main (int argc, char **argv)
+{
+#define STARTX	0
+#define STARTY	20
+#define WIDTH	360
+#define HEIGHT	178
+#define ONE_SECOND	(audio_rate)
+    long	chrsize, lumsize;
+    void	*chrbuf, *lumbuf;
+    int		i, x, y, w, h;
+    long	start_time, audio_rate;
+
+    if (!Init3DO ())
+	return;
+
+    if (!(chrbuf = LoadFile ("earth.cel", &chrsize, MEMTYPE_ANY)))
+	return;
+	
+    if (!(lumbuf = LoadFile ("earth.lum", &lumsize, MEMTYPE_ANY)))
+	return;
+	
+    OpenMathFolio ();
+    OpenAudioFolio ();
+    audio_rate = GetAudioRate () >> 16;
+
+    x = 90;
+    
+Rotate:
+    start_time = GetAudioTime ();
+    cel_pt[0].pt_X = STARTX + WIDTH / 2;
+    cel_pt[0].pt_Y = STARTY;
+    cel_pt[1].pt_X = cel_pt[0].pt_X;
+    cel_pt[1].pt_Y = cel_pt[0].pt_Y;
+    cel_pt[2].pt_X = cel_pt[1].pt_X + 1;
+    cel_pt[2].pt_Y = cel_pt[0].pt_Y + 1;
+    cel_pt[3].pt_X = cel_pt[0].pt_X - 1;
+    cel_pt[3].pt_Y = cel_pt[2].pt_Y;
+
+    y = 0;
+    h = 1;
+    for (i = 0; i < HEIGHT / 2; i++)
+    {
+	int	dx, dy;
+	
+	blt_cel (chrbuf, chrsize, x, y, h);
+	y++;
+	
+	dy = (HEIGHT / 2 - y);
+	dx = Sqrt32 ((HEIGHT / 2) * (HEIGHT / 2) - (dy * dy));
+	
+	cel_pt[0].pt_X = STARTX + (WIDTH / 2) - dx;
+	cel_pt[1].pt_X = STARTX + (WIDTH / 2) + dx;
+	cel_pt[2].pt_X = cel_pt[1].pt_X;
+	cel_pt[3].pt_X = cel_pt[0].pt_X;
+	
+	cel_pt[0].pt_Y++;
+	cel_pt[1].pt_Y++;
+	cel_pt[2].pt_Y++;
+	cel_pt[3].pt_Y++;
+    }
+    
+    for (i = 0; i < HEIGHT / 2; i++)
+    {
+	int	dx, dy;
+	
+	blt_cel (chrbuf, chrsize, x, y, h);
+	y++;
+	
+	dy = (y - HEIGHT / 2);
+	dx = Sqrt32 ((HEIGHT / 2) * (HEIGHT / 2) - (dy * dy));
+	
+	cel_pt[0].pt_X = STARTX + (WIDTH / 2) - dx;
+	cel_pt[1].pt_X = STARTX + (WIDTH / 2) + dx;
+	cel_pt[2].pt_X = cel_pt[1].pt_X;
+	cel_pt[3].pt_X = cel_pt[0].pt_X;
+	
+	cel_pt[0].pt_Y++;
+	cel_pt[1].pt_Y++;
+	cel_pt[2].pt_Y++;
+	cel_pt[3].pt_Y++;
+    }
+    
+    blt_cel (lumbuf, lumsize, 90, STARTY, 0);
+    
+    batch_cels ();
+
+    while (GetAudioTime () < start_time + (ONE_SECOND / 8))
+    {
+	if (ReadControlPad (~0))
+	    exit (0);
+	Yield ();
+    }
+
+    if (++x >= WIDTH)
+	x = 0;
+	
+    goto Rotate;
+    
+    while (ReadControlPad (~0));    
+    while (!ReadControlPad (~0));
+
+    UnloadFile (chrbuf);
+
+    Uninit3DO ();
+}

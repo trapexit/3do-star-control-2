@@ -1,0 +1,20 @@
+set BackupDisk 'SC2Backup3'
+set BackupDir {BackupDisk}':planets'
+set PlanetDir  ':Planets:'
+
+if (`exists -d {BackupDisk}:` != {BackupDisk}:)
+    echo 'SC2 backup disk misnamed -- must be SC2Backup3'
+    exit 1
+end
+
+if (`exists -d {BackupDir}` != {BackupDir})
+    echo 'Creating a new folder -- planets'
+    newfolder {BackupDir}
+end
+
+sc2
+echo 'Backing up...' "{PlanetDir}"
+backup -r -a -c -from {PlanetDir} -to {BackupDir} > commands
+execute commands
+
+echo 'SC2 backup #3 complete.'

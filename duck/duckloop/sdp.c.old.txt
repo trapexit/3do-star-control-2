@@ -1,0 +1,265 @@
+/*
+	File:		sdp.c
+
+	Contains:	Simple (Stupid) Duck Player          
+
+	Written by:	Dan Miller and Victor Yurkovsky
+	Modified by: David Silver
+
+	Copyright:	© 1993,4 by The Duck Corporation. All rights reserved.
+				This material constitutes confidential and proprietary
+				information of The Duck Corporation and shall not be used by
+				any person or bozo for any purpose except as expressly
+				authorized in writing by The Duck Corporation.
+
+*/
+
+
+#include "DuckDebug.h"
+#include "DuckTypes.h"
+
+#include "Portfolio.h"
+#include "Init3DO.h"
+#include "mem.h"
+#include "SDPlayer.h"
+
+extern int ReadControlPad(long);
+
+#define BUTTONS 	ReadControlPad(0xFFFFFFFFL)
+#define BUFSIZE		32768
+
+extern bool setupScreens(player *plr,u32 screencnt);
+extern void setupPlayer(player *plr,char *paramname);
+
+void showframe(s32 frame);
+u32* loadftable(char *name);
+
+extern ScreenContext TheScreen;
+
+player plr;
+u32 *frametab;
+ubyte *buf;
+s32 curframe;
+u32 length;
+char filename[40];
+Stream *sp;
+
+
+u32 longswp(u32 a) {
+	return( ((a&0xFFL)<<24) | ((a&0xFF000000L)>>24) | ((a&0xFF00L)<<8) | ((a&0xFF0000L)>>8));
+}
+
+u16 wordswp(u16 a) {
+	return(((a & 0x00FF)<<8) | ((a >> 8)& 0x00FF));
+}
+
+void clearScrn(u32 *screen) {
+
+	int x,y;
+	for(y=0;y<120;y++) {
+		for(x=0;x<320;x++) {
+			*screen++=0;
+		}
+	}
+}
+
+void
+makename(char *name,char *body,char *ext)
+{
+	strcpy(name,"duckart/");
+	strcat(name,body);
+	strcat(name,".");
+	strcat(name,ext);
+}
+
+int
+fix_frametable(u32 *frametab)
+{
+	long res;
+	long cnt,offset;
+
+	SeekDiskStream(sp,frametab[length],SEEK_SET);
+	if((res=ReadDiskStream(sp,(char *)&cnt,4)) != 4) {
+		printf("fix_frmtbl error\n");
+		return(1);
+	}
+	offset = cnt+8;
+
+	SeekDiskStream(sp,frametab[length]+offset+4,SEEK_SET);
+	if((res=ReadDiskStream(sp,(char *)&cnt,4)) != 4) {
+		printf("fix_frmtbl error\n");
+		return(1);
+	}
+	offset += longswp(cnt)/8 + 16;
+	
+	frametab[length+1] = frametab[length] + offset;
+	length++;
+	
+	return(0);
+}
+
+u32 *
+loadftable(char *name)
+{	
+	Stream *sp;
+	long len,res;
+	u32 *p;
+	
+	makename(filename,name,"frm");
+
+	sp = OpenDiskStream(filename,0);
+	if(!sp) {
+		printf("error opening %s\n",filename);
+		return((u32 *)0L);
+	}
+	len = SeekDiskStream(sp,0L,SEEK_END);
+	length = len/4 - 1;
+	SeekDiskStream(sp,0L,SEEK_SET);
+
+	p = (u32 *)malloc(len+4);
+	if(!p) {
+		printf("couldn't malloc %ld\n",len);
+		return((u32*)0L);
+	}
+
+	res = (long)ReadDiskStream(sp,(char *)p,len);
+	
+	if(res != len) {
+		printf("couldn't read frmtbl %ld\n",res);
+		return((u32*)0L);
+	}
+
+	CloseDiskStream(sp);
+
+	return(p);	
+}
+
+void
+showframe(s32 frame)
+{
+	static int curscreen=0;
+	u32 f,len;
+	ubyte *screen;
+
+	screen = (ubyte*)GetPixelAddress(TheScreen.sc_Screens[curscreen],0,0);
+
+	f = frametab[frame];
+	SeekDiskStream(sp,f,SEEK_SET);
+	len = frametab[frame+1] - f;
+	ReadDiskStream(sp,buf,len);
+
+	dxframe(buf,screen,&plr);		
+
+	DisplayScreen(TheScreen.sc_Screens[curscreen],0);
+	if(++curscreen == plr.numScreens) curscreen = 0;
+}
+
+void
+changedir(char *name)
+{
+	if (ChangeDirectory(name) < 0)
+	{
+		printf("Cannot change directory!");
+	}
+}
+
+void
+loop(u32 start,u32 end)
+{
+	curframe = start;
+	
+	clearScrn((u32*)GetPixelAddress(TheScreen.sc_Screens[0],0,0));
+
+	while(1) {
+		showframe(curframe);
+		
+		if(++curframe == start+end) curframe = start;
+		
+		if(BUTTONS&JOYFIREC) break;
+
+	}
+}
+
+
+int playloop(char *name,u32 startframe,u32 numframes){
+	int i;
+
+	changedir("/cd-rom");
+	
+	plr.numScreens = kNumScreens;
+	
+	if(!setupScreens(&plr,plr.numScreens)) {
+		printf("unable to initialize screens\n");
+		return(false);
+	}
+	
+	for(i=0;i<TheScreen.sc_nScreens;i++) 
+		clearScrn((u32*)GetPixelAddress(TheScreen.sc_Screens[i],0,0));
+
+	makename(filename,name,"duk");
+
+	sp = OpenDiskStream(filename,-8);
+	if(!sp) {
+		printf("error opening %s\n",filename);
+		return(1);
+	}
+	
+	frametab = loadftable(name);
+	if(!frametab) {
+		printf("Error loading frame table\n");
+		return(1);
+	}
+
+	buf = (ubyte *)malloc(BUFSIZE);
+	if(buf == NULL) {
+		printf("malloc failed\n");
+		return(1);
+	}
+	
+	fix_frametable(frametab);
+	
+	makename(filename,name,"hdr");
+	if(!loadParams(&plr,filename)) {
+		printf("Error loading params\n");
+		return(1);
+	}
+	
+	makename(filename,name,"tbl");
+	setupPlayer(&plr,filename);
+	
+	if(numframes) loop(startframe,numframes);
+	else loop(startframe,length);
+	
+	free(buf);
+	free(frametab);
+	
+	CloseDiskStream(sp);
+	
+	return(0);
+}
+
+/*
+	usage: sdp [filename startframe numframes]
+	
+		will open filename.DUK and play numframes frames starting from startframe
+		in a loop
+		
+		if called with no arguments, will play VIDLOOP.DUK in it's entirety in a
+		loop.
+
+		as usual, there should be a filename.DUK, filename.TBL, filename.HDR and
+		filename.FRM in the duckart directory
+
+*/
+
+main(int argc,char **argv)
+{
+	if(argc == 4) {
+		printf("playing %s: frames %ld: start %ld\n",argv[1],atoi(argv[3]),atoi(argv[2]));
+		printf("press C to quit\n");
+		playloop(argv[1],atoi(argv[2]),atoi(argv[3]));
+		printf("all finished, all done, sold!\n");
+	} else {
+		playloop("VidLoop",0,0);
+	}
+}
